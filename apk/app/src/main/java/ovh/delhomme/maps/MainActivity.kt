@@ -477,36 +477,81 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(8), dp(16), dp(8), dp(8))
         }
         box.addView(TextView(this).apply {
-            text = "Choisir un compte"
+            text = "Compte Hubera ID"
             setTextColor(ink)
             textSize = 22f
-            setPadding(dp(16), dp(8), dp(16), dp(8))
+            setPadding(dp(16), dp(8), dp(16), dp(4))
+        })
+        box.addView(TextView(this).apply {
+            text = "Chaque utilisateur a son compte. Sans session : se connecter ou créer un compte."
+            setTextColor(muted)
+            textSize = 13f
+            setPadding(dp(16), 0, dp(16), dp(12))
         })
         val dialog = AlertDialog.Builder(this).setView(ScrollView(this).apply { addView(box) }).create()
-        accounts.forEach { acc ->
-            box.addView(accountRow(acc.email, "Compte Hubera ID", accountInitial(acc.email, acc.email), acc.email, ink, muted) {
+        val currentEmail = suite.email().trim().lowercase()
+        val currentOk = currentEmail.isNotEmpty() && suite.token().isNotBlank()
+        // Session Maps en cours en premier — pas le pin device Paul.
+        val ordered = if (currentOk) {
+            accounts.filter { it.email.equals(currentEmail, true) } +
+                accounts.filter { !it.email.equals(currentEmail, true) }
+        } else {
+            accounts
+        }
+        if (currentOk) {
+            box.addView(
+                accountRow(
+                    currentEmail,
+                    "Connecté sur Maps",
+                    accountInitial(currentEmail, currentEmail),
+                    currentEmail,
+                    ink,
+                    muted,
+                ) {
+                    dialog.dismiss()
+                    Toast.makeText(this@MainActivity, "Hubera ID · $currentEmail", Toast.LENGTH_SHORT).show()
+                },
+            )
+        }
+        ordered.forEach { acc ->
+            if (currentOk && acc.email.equals(currentEmail, true)) return@forEach
+            box.addView(accountRow(acc.email, "Autre compte sur cet appareil", accountInitial(acc.email, acc.email), acc.email, ink, muted) {
                 dialog.dismiss()
                 if (acc.accessToken.isBlank() && acc.refreshToken.isBlank()) {
-                    Toast.makeText(this@MainActivity, "Session absente", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "Session absente — reconnecte-toi", Toast.LENGTH_LONG).show()
+                    promptNewAccount()
                 } else {
                     suite.continueWithHubera(acc.email)
                 }
             })
         }
+        box.addView(accountRow("Se connecter ou créer un compte", "Hubera ID", null, null, ink, muted) {
+            dialog.dismiss()
+            promptNewAccount()
+        })
         box.addView(accountRow("Paramètres", null, null, null, ink, muted) {
             dialog.dismiss()
             if (this::web.isInitialized) {
                 web.evaluateJavascript("try{setTab('settings')}catch(e){}", null)
             }
         })
-        box.addView(accountRow("Ajouter un compte", null, null, null, ink, muted) {
-            dialog.dismiss()
-            promptNewAccount()
-        })
         if (!isHuberaIdInstalled()) {
             box.addView(accountRow("Installer Hubera ID", null, null, null, ink, muted) {
                 dialog.dismiss()
                 openHuberaIdInstall()
+            })
+        }
+        if (currentOk) {
+            box.addView(accountRow("Se déconnecter de Maps", null, null, null, ink, muted) {
+                dialog.dismiss()
+                suite.clearSession()
+                if (this::web.isInitialized) {
+                    web.evaluateJavascript(
+                        "try{localStorage.removeItem('hubera-maps-email');paintId&&paintId()}catch(e){}",
+                        null,
+                    )
+                }
+                Toast.makeText(this@MainActivity, "Déconnecté", Toast.LENGTH_SHORT).show()
             })
         }
         dialog.setOnShowListener {

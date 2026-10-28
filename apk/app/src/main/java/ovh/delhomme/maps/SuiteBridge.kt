@@ -31,8 +31,21 @@ class SuiteBridge(
     private var pendingFuel = "{}"
 
     init {
-        pendingContacts = prefs.getString("contacts_cache", "[]") ?: "[]"
-        pendingFuel = prefs.getString("fuel_cache", "{}") ?: "{}"
+        // Ne jamais réafficher un cache contacts/fuel sans session (fuite multi-comptes).
+        if (token().isNotBlank()) {
+            pendingContacts = prefs.getString("contacts_cache", "[]") ?: "[]"
+            pendingFuel = prefs.getString("fuel_cache", "{}") ?: "{}"
+        } else {
+            pendingContacts = "[]"
+            pendingFuel = "{}"
+            prefs.edit().remove("contacts_cache").remove("fuel_cache").apply()
+        }
+    }
+
+    private fun clearPrivateCaches() {
+        pendingContacts = "[]"
+        pendingFuel = "{}"
+        prefs.edit().remove("contacts_cache").remove("fuel_cache").apply()
     }
 
     fun ingest(data: Uri?) {
@@ -58,6 +71,8 @@ class SuiteBridge(
     fun setToken(token: String) {
         val t = token.trim()
         if (t.isBlank()) return
+        val prev = prefs.getString("token", "") ?: ""
+        if (prev != t) clearPrivateCaches()
         prefs.edit().putString("token", t).apply()
     }
 
@@ -67,14 +82,37 @@ class SuiteBridge(
     @JavascriptInterface
     fun email(): String = prefs.getString("email", "") ?: ""
 
-    /** Reprend un compte Hubera déjà sur le téléphone (Music / ID / Mail…). Hors UI thread. */
+    /** Déconnexion Maps uniquement (ne touche pas aux autres apps Hubera ID). */
+    @JavascriptInterface
+    fun clearSession() {
+        clearPrivateCaches()
+        prefs.edit().remove("token").remove("email").apply()
+        main.post {
+            web()?.evaluateJavascript(
+                "try{localStorage.removeItem('hubera-maps-email');paintId&&paintId();window.__mapsContactsReady&&window.__mapsContactsReady()}catch(e){}",
+                null,
+            )
+        }
+    }
+
+    /**
+     * Reprend un compte Hubera déjà sur le téléphone.
+     * Si plusieurs comptes : ne rien auto-choisir (évite le pin Paul → Youen).
+     */
     fun adoptHuberaId() {
         io.execute {
             runCatching {
                 if (token().isNotBlank() && email().isNotBlank()) return@runCatching
-                val acc = HuberaIdAccounts.listAccounts(context)
-                    .firstOrNull { it.accessToken.isNotBlank() || it.email.isNotBlank() }
-                    ?: return@runCatching
+                val accounts = HuberaIdAccounts.listAccounts(context)
+                    .filter { it.accessToken.isNotBlank() || it.email.isNotBlank() }
+                if (accounts.size != 1) {
+                    android.util.Log.i(
+                        "HuberaSuite",
+                        "adoptHuberaId skip auto (${accounts.size} comptes) — chooser requis",
+                    )
+                    return@runCatching
+                }
+                val acc = accounts.first()
                 if (token().isBlank() && acc.accessToken.isNotBlank()) setToken(acc.accessToken)
                 if (email().isBlank() && acc.email.isNotBlank()) {
                     prefs.edit().putString("email", acc.email.trim()).apply()
@@ -102,6 +140,7 @@ class SuiteBridge(
             val acc = HuberaIdAccounts.listAccounts(context)
                 .firstOrNull { it.email.equals(email.trim(), ignoreCase = true) }
                 ?: return
+            clearPrivateCaches()
             if (acc.accessToken.isNotBlank()) setToken(acc.accessToken)
             prefs.edit().putString("email", acc.email.trim()).apply()
             HuberaIdAccounts.saveSession(
@@ -119,12 +158,24 @@ class SuiteBridge(
     @JavascriptInterface
     fun refreshContacts() {
         io.execute {
+            if (token().isBlank()) {
+                clearPrivateCaches()
+                main.post {
+                    web()?.evaluateJavascript(
+                        "window.__mapsContactsReady&&window.__mapsContactsReady()",
+                        null,
+                    )
+                }
+                return@execute
+            }
             val body = fetchContacts()
             if (!body.isNullOrBlank() && body.startsWith("[")) {
                 pendingContacts = body
                 prefs.edit().putString("contacts_cache", body).apply()
-            } else if (pendingContacts == "[]") {
-                pendingContacts = prefs.getString("contacts_cache", "[]") ?: "[]"
+            } else {
+                // Échec fetch : ne pas recycler un ancien cache d’un autre compte.
+                pendingContacts = "[]"
+                prefs.edit().remove("contacts_cache").apply()
             }
             main.post {
                 web()?.evaluateJavascript(
@@ -136,7 +187,7 @@ class SuiteBridge(
     }
 
     @JavascriptInterface
-    fun takeContacts(): String = pendingContacts
+    fun takeContacts(): String = if (token().isBlank()) "[]" else pendingContacts
 
     @JavascriptInterface
     fun refreshFuel() {
@@ -254,6 +305,7 @@ class SuiteBridge(
             val access = json.optString("access_token")
             if (access.isBlank()) return json.optString("error").ifBlank { "Identifiants invalides" }
             val refresh = json.optString("refresh_token")
+            clearPrivateCaches()
             setToken(access)
             prefs.edit().putString("email", clean).apply()
             HuberaIdAccounts.saveSession(

@@ -56,6 +56,52 @@
     }
     body { --chrome: 178px; }
     body.music-off { --chrome: 68px; }
+    /* Guidage type Google Maps : la bottom nav (tabs + dock) cède la place au HUD / Fuel. */
+    body.nav {
+      --chrome: calc(10px + var(--safe-bottom, 0px));
+    }
+    body.nav #tabs,
+    body.nav .tabs {
+      display: none !important;
+    }
+    body.nav #musicDock,
+    body.nav .music {
+      display: none !important;
+    }
+    body.nav .chrome {
+      padding-bottom: var(--safe-bottom, 0px);
+      border-top: 0;
+      min-height: 0;
+      background: transparent;
+    }
+    body.nav .fuel-peek { display: none !important; }
+    body.nav .music-peek { display: none !important; }
+    /* Carte Fuel / arrêt : plein bas d’écran, comme la barre ETA Google. */
+    body.nav .fuel {
+      bottom: calc(8px + var(--safe-bottom, 0px));
+      border-radius: 16px;
+      box-shadow: 0 8px 28px rgba(15, 23, 42, .28);
+    }
+    body.nav .fab {
+      bottom: calc(88px + var(--safe-bottom, 0px));
+    }
+    body.nav .nav-signs {
+      bottom: calc(96px + var(--safe-bottom, 0px));
+    }
+    .stop-confirm {
+      position: absolute; z-index: 2200; left: 16px; right: 16px;
+      bottom: calc(24px + var(--safe-bottom, 0px));
+      background: #1a1a2e; border: 1px solid #e94560; border-radius: 16px;
+      padding: 16px; color: #f1f5f9; box-shadow: 0 12px 40px rgba(0,0,0,.5);
+    }
+    .stop-confirm h2 { margin: 0 0 6px; font-size: 17px; font-weight: 800; }
+    .stop-confirm p { margin: 0 0 14px; font-size: 13px; color: #94a3b8; line-height: 1.4; }
+    .stop-confirm .row { display: flex; gap: 8px; }
+    .stop-confirm button {
+      flex: 1; border: 0; border-radius: 12px; padding: 12px; font-weight: 700; cursor: pointer;
+    }
+    .stop-confirm .go { background: #e94560; color: #fff; }
+    .stop-confirm .ghost { background: #2d2d44; color: #f1f5f9; }
     #map { position: absolute; inset: 0; background: #d4dde3; }
     .leaflet-container, .leaflet-pane, .leaflet-tile-pane, .leaflet-map-pane {
       background: #d4dde3 !important;
@@ -690,7 +736,7 @@
       background: transparent; border: 0; border-bottom: 1px solid #2d2d44; color: #f1f5f9;
       padding: 14px 0; cursor: pointer; font-size: 15px;
     }
-    .hits[hidden], .sheet[hidden], .fuel[hidden], .panel[hidden], .nav-bar[hidden], .hud[hidden], .alts[hidden], .search-bar[hidden], .route-card[hidden], #chips[hidden], .page[hidden], .music-peek[hidden], .road-sign[hidden], .fab[hidden], .music-sheet[hidden], .poi-card[hidden], .nav-signs[hidden], .hud-speed[hidden], .trip-info[hidden], .trip-info-panel[hidden], .detour-offer[hidden] { display: none !important; }
+    .hits[hidden], .sheet[hidden], .fuel[hidden], .panel[hidden], .nav-bar[hidden], .hud[hidden], .alts[hidden], .search-bar[hidden], .route-card[hidden], #chips[hidden], .page[hidden], .music-peek[hidden], .road-sign[hidden], .fab[hidden], .music-sheet[hidden], .poi-card[hidden], .nav-signs[hidden], .hud-speed[hidden], .trip-info[hidden], .trip-info-panel[hidden], .detour-offer[hidden], .stop-confirm[hidden] { display: none !important; }
     .chrome {
       padding: 0 0 calc(10px + var(--safe-bottom));
       border-top: 1px solid #2d2d44;
@@ -852,7 +898,13 @@
       visibility: hidden;
       pointer-events: none;
     }
-    #pageFuel .page-head { display: none; }
+    body:has(#pageSettings:not([hidden])) #musicDock,
+    body:has(#pageSettings:not([hidden])) #musicSheet,
+    body:has(#pageSettings:not([hidden])) .music-sheet {
+      display: none !important;
+    }
+    #pageFuel .fuel-panel { padding-top: 46px; }
+    #fuelPageFold { top: 14px; z-index: 3; }
     #pageFuel .page-body {
       flex: none;
       overflow: visible;
@@ -881,9 +933,9 @@
     }
     .drawer {
       position: absolute; z-index: 2001; top: 0; bottom: 0; left: 0; width: min(86vw, 320px);
-      background: #1a1a2e; color: #f1f5f9; padding: calc(18px + var(--safe-top)) 0 16px;
+      background: #1a1a2e; color: #f1f5f9; padding: calc(18px + var(--safe-top)) 0 0;
       box-shadow: 4px 0 16px rgba(0,0,0,.4); transform: translateX(-105%); transition: transform .2s ease;
-      touch-action: pan-y;
+      touch-action: pan-y; display: flex; flex-direction: column; overflow: hidden;
     }
     .drawer.open { transform: translateX(0); }
     .scrim[hidden] { display: none !important; }
@@ -897,6 +949,131 @@
     }
     .d-item:active { background: #16213e; }
     .d-label { padding: 12px 18px 4px; color: #94a3b8; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+    .d-foot {
+      margin-top: auto; padding: 12px 18px calc(10px + var(--safe-bottom));
+      border-top: 1px solid #2d2d44;
+    }
+    .d-ver {
+      width: 100%; border: 0; background: transparent; color: #64748b;
+      font-size: 12px; font-weight: 650; text-align: left; padding: 8px 0; cursor: pointer;
+    }
+    .d-ver:active { color: #e94560; }
+    .notes-sheet {
+      position: absolute; inset: 0; z-index: 2100; background: rgba(0,0,0,.5);
+      display: grid; place-items: end center; padding: 0 12px calc(12px + var(--safe-bottom));
+    }
+    .notes-sheet[hidden] { display: none !important; }
+    .notes-card {
+      width: min(100%, 420px); max-height: 70vh; overflow: hidden;
+      background: #1a1a2e; border-radius: 16px 16px 12px 12px; box-shadow: 0 -4px 24px rgba(0,0,0,.45);
+      display: flex; flex-direction: column;
+    }
+    .notes-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 14px 10px; border-bottom: 1px solid #2d2d44;
+    }
+    .notes-body { padding: 12px 14px 18px; overflow-y: auto; color: #cbd5e1; font-size: 14px; line-height: 1.45; }
+    .notes-body .nv { margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid #2d2d44; }
+    .notes-body .nv:last-child { border-bottom: 0; margin-bottom: 0; }
+    .notes-body .nv strong { display: block; color: #f1f5f9; margin-bottom: 4px; }
+    .notes-body .nv span { color: #94a3b8; font-size: 13px; }
+    body.fuel-ui-off .tab[data-tab="trips"],
+    body.fuel-ui-off .tab[data-tab="fills"],
+    body.fuel-ui-off .tab[data-tab="budget"],
+    body.fuel-ui-off #drawerFuelApp,
+    body.fuel-ui-off .d-item[data-go="trips"] { display: none !important; }
+    .saved-list .place-line {
+      margin: 0 0 8px; border: 1px solid #2d2d44; border-radius: 14px; border-bottom: 1px solid #2d2d44;
+      background: #16213e; padding: 4px 6px 4px 2px;
+    }
+    .saved-list .place-row {
+      background: transparent; padding: 10px 10px;
+    }
+    .saved-list .place-row strong { display: block; font-size: 15px; margin-bottom: 2px; }
+    .saved-list .place-meta { display: block; color: #94a3b8; font-size: 12px; font-weight: 500; }
+    .place-swipe {
+      position: relative;
+      overflow: hidden;
+      border-radius: 14px;
+      margin: 0 0 10px;
+      background: #0f172a;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+    }
+    .place-actions-bg {
+      position: absolute;
+      inset: 0 0 0 auto;
+      display: flex;
+      width: 112px;
+      z-index: 0;
+    }
+    .place-act {
+      flex: 1;
+      border: 0;
+      color: #fff;
+      font: 600 11px/1.15 system-ui, sans-serif;
+      cursor: pointer;
+      padding: 0 4px;
+    }
+    .place-act.edit { background: #2563eb; }
+    .place-act.del { background: #dc2626; }
+    .place-front {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #0f172a;
+      border-radius: 14px;
+      transition: transform 0.18s ease;
+      touch-action: pan-y;
+    }
+    .place-front .place-row {
+      flex: 1;
+      text-align: left;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      padding: 12px 14px;
+      cursor: pointer;
+    }
+    .place-front .place-row strong {
+      display: block; font-size: 15px; margin-bottom: 2px;
+      overflow-wrap: anywhere; word-break: break-word;
+    }
+    .place-front .place-meta {
+      display: block; color: #94a3b8; font-size: 12px; font-weight: 500;
+      overflow-wrap: anywhere; word-break: break-word;
+    }
+    .place-hint {
+      flex-shrink: 0;
+      padding-right: 12px;
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 500;
+      opacity: 0.85;
+    }
+    .place-swipe.open .place-hint { opacity: 0; }
+    .place-card-empty {
+      border-radius: 14px;
+      margin: 0 0 10px;
+      background: #0f172a;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+    }
+    .place-card-empty .place-row {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      padding: 12px 14px;
+      cursor: pointer;
+    }
+    .place-card-empty .place-row strong { display: block; font-size: 15px; margin-bottom: 2px; }
+    .place-card-empty .place-meta { display: block; color: #94a3b8; font-size: 12px; font-weight: 500; }
+    .saved-empty {
+      margin: 18px 4px; color: #94a3b8; font-size: 14px; line-height: 1.4;
+    }
   </style>
 </head>
 <body>
@@ -911,7 +1088,7 @@
       <button type="button" class="ico" id="btnSettingsGear" title="Paramètres" aria-label="Paramètres">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68 1.65 1.65 0 0 0 10.09 3H10.1a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z"/></svg>
       </button>
-      <button type="button" class="avatar" id="btnUser" title="Compte" aria-label="Compte">P</button>
+      <button type="button" class="avatar" id="btnUser" title="Compte" aria-label="Compte">C</button>
     </form>
     <div class="hud" id="navBar" hidden>
       <button type="button" class="ico" id="btnMenuNav" title="Menu" aria-label="Menu">
@@ -1008,6 +1185,14 @@
       <button type="button" class="fill" id="btnFill">Plein</button>
     </div>
   </div>
+  <div class="stop-confirm" id="stopConfirm" hidden>
+    <h2>Arrêter le trajet ?</h2>
+    <p id="stopConfirmText">Le guidage et le suivi Fuel s’arrêtent. Confirme seulement si tu as vraiment fini.</p>
+    <div class="row">
+      <button type="button" class="ghost" id="stopConfirmNo">Continuer</button>
+      <button type="button" class="go" id="stopConfirmYes">Oui, arrêter</button>
+    </div>
+  </div>
   <button type="button" class="fuel-card-handle" id="fuelCardHandle" hidden title="Déplier la carte Fuel" aria-label="Déplier la carte Fuel">Fuel</button>
   <div class="page" id="pageFuel" hidden>
     <button type="button" class="fuel-fold" id="fuelPageFold" title="Replier la carte Fuel" aria-label="Replier la carte Fuel">▾</button>
@@ -1042,8 +1227,8 @@
       <button type="button" class="ghost" id="btnDefineWork">Ajouter Travail</button>
     </div>
     <div class="page-body">
-      <p class="page-hint">Le crayon à gauche change Maison ou Travail. Tes contacts Hubera s’affichent sur la carte, avec leur nom.</p>
-      <div id="savedList"></div>
+      <p class="page-hint">Maison et Travail : Ajouter, ou Modifier s’ils sont déjà définis. Crayon = changer l’adresse.</p>
+      <div id="savedList" class="saved-list"></div>
     </div>
   </div>
   <div class="page" id="pageSettings" hidden>
@@ -1083,10 +1268,10 @@
   <button type="button" class="scrim" id="scrim" hidden aria-label="Fermer le menu"></button>
   <aside class="drawer" id="drawer" aria-hidden="true">
     <div class="d-head">
-      <button type="button" class="avatar" id="drawerAvatar">P</button>
+      <button type="button" class="avatar" id="drawerAvatar">C</button>
       <div class="d-who">
-        <div class="who">Paul</div>
-        <div class="mail" id="drawerMail">Compte Hubera</div>
+        <div class="who">Compte</div>
+        <div class="mail" id="drawerMail">Non connecté</div>
       </div>
       <button type="button" class="ico" id="btnCloseDrawer" aria-label="Fermer le menu" title="Fermer le menu">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -1102,9 +1287,21 @@
     <button type="button" class="d-item" data-go="settings">Paramètres</button>
     <button type="button" class="d-item" data-go="offline">Cartes hors ligne</button>
     <div class="d-label">Apps</div>
-    <button type="button" class="d-item" data-go="fuelapp">Ouvrir l’app Fuel</button>
+    <button type="button" class="d-item" data-go="fuelapp" id="drawerFuelApp">Ouvrir l’app Fuel</button>
     <button type="button" class="d-item" data-go="music">Hubera Music</button>
+    <div class="d-foot">
+      <button type="button" class="d-ver" id="drawerVersion" title="Double-tap : notes de version">Maps · …</button>
+    </div>
   </aside>
+  <div class="notes-sheet" id="versionNotesSheet" hidden>
+    <div class="notes-card">
+      <div class="notes-head">
+        <strong>Notes de version</strong>
+        <button type="button" class="ico" id="versionNotesClose" aria-label="Fermer">✕</button>
+      </div>
+      <div class="notes-body" id="versionNotesBody"></div>
+    </div>
+  </div>
   <div class="dev-fuel-bar" id="devFuelBar">
     <span id="devFuelLabel">DEV Fuel</span>
     <button type="button" id="btnFuelUx">Comparer</button>

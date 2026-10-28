@@ -1,5 +1,25 @@
 # Hubera Maps — versions
 
+## 0.1.131 (26 oct. 2026)
+
+- Enregistrés : petites cartes, swipe Modifier / Supprimer (confirmation), édition d’une adresse enregistrée.
+- Limite de vitesse de zone aussi sans conduite démarrée.
+- Bouger / zoomer la carte ne ferme plus la sélection d’itinéraire.
+- Dual APK vc 132. OTA non forcée. Overlay Samsung + Blackview `-r`.
+
+## 0.1.130 (26 oct. 2026)
+
+- Plus de snapshot Fuel hors écran (évitait les hop `hubera-maps://` qui volaient le premier plan pendant le suivi Fuel).
+- Dual APK vc 131. OTA non forcée. Overlay Samsung + Blackview `-r`.
+
+## 0.1.129 (26 oct. 2026)
+
+- Fuel dans Maps uniquement en mode voiture ou suivi libre déjà démarré (onglet / FAB masqués sinon).
+- Maison / Travail : « Modifier » si déjà défini (plus « Ajouter » à tort).
+- Drawer : version en bas, double-tap → notes de version (historique).
+- Enregistrés : lignes plus lisibles (titre + adresse).
+- Dual APK `cloud.hubera.maps` + `ovh.delhomme.maps`, versionCode 130. OTA `forceUpdate: false` / `mandatory: false`. Overlay Samsung + Blackview `-r`. Pas Nothing.
+
 ## 0.1.112 (19 oct. 2026)
 
 - Démarrer le trajet au-dessus de la barre, fenêtre Fuel qui se ferme en restant sur l’onglet Fuel, jauge demi-cercle, voiture du dernier trajet.

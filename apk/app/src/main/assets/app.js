@@ -215,6 +215,8 @@ let searchTimer = 0;
 let searchGen = 0;
 let suppressSuggestUntil = 0;
 let pendingAssign = null;
+/** Index dans `saved[]` quand on remplace une adresse enregistrée (swipe Modifier). */
+let pendingSavedEditIndex = null;
 let lastDest = null;
 let lastOrigin = null;
 let pendingEnd = null;
@@ -223,6 +225,7 @@ let detourPollAt = 0;
 let ignoredDetourKey = '';
 let offeredDetour = null;
 let activeTab = 'maps';
+let returnTo = 'maps';
 let altLayers = [];
 let routeChoices = [];
 let selectedRouteId = null;
@@ -281,7 +284,8 @@ const routeCache = new Map();
 const osrmWait = new Map();
 let osrmReqId = 0;
 let ignoreSearchInput = false;
-const HUBERA_OWNER = { email: 'paul@delhomme.ovh', name: 'Paul' };
+/** Jamais un compte perso en dur : chaque utilisateur voit son identité SSO / locale. */
+const HUBERA_GUEST = { email: '', name: 'Compte' };
 let appVisible = !document.hidden;
 let idleGeoTimer = 0;
 let musicPollTimer = 0;
@@ -669,7 +673,11 @@ function toast(msg) {
 }
 
 function musicDockOn() {
-  return localStorage.getItem(MUSIC_KEY) !== '0';
+  // Par défaut masqué : « Rien en cours » n’apparaît qu’après tap sur l’icône Music
+  // (ou quand une lecture démarre — applyMusicState rouvre le dock).
+  const v = localStorage.getItem(MUSIC_KEY);
+  if (v == null) return false;
+  return v === '1';
 }
 
 function setMusicDock(on) {
@@ -926,9 +934,48 @@ function geoOpts({ accurate, freshMs, timeout }) {
 
 let huberaContacts = [];
 
+/** Anciens hardcodes / seed — ne jamais les réafficher sans session réelle. */
+const OWNER_LEAK_EMAILS = new Set([
+  'paul@delhomme.ovh',
+  'paveldelhomme@gmail.com',
+  'dev@delhomme.ovh',
+  'admin@delhomme.ovh',
+]);
+
+function suiteTokenPresent() {
+  try {
+    if (typeof HuberaSuite !== 'undefined' && HuberaSuite.token) {
+      return String(HuberaSuite.token() || '').trim().length > 20;
+    }
+  } catch {
+    /* native absent */
+  }
+  try {
+    return /(?:^|;\s*)hubera_suite_auth=/.test(document.cookie || '');
+  } catch {
+    return false;
+  }
+}
+
+function openHuberaIdLogin() {
+  const ret = encodeURIComponent(
+    typeof location !== 'undefined' ? location.href.split('#')[0] : 'https://maps.hubera.cloud/',
+  );
+  const url = `https://id.hubera.cloud/?client=maps&return=${ret}`;
+  try {
+    if (typeof HuberaSuite !== 'undefined' && HuberaSuite.openAccountChooser) {
+      HuberaSuite.openAccountChooser();
+      return;
+    }
+  } catch {
+    /* web */
+  }
+  window.location.href = url;
+}
+
 function loadId() {
-  let email = HUBERA_OWNER.email;
-  let name = HUBERA_OWNER.name;
+  let email = '';
+  let name = HUBERA_GUEST.name;
   try {
     if (typeof HuberaSuite !== 'undefined' && HuberaSuite.email) {
       const e = String(HuberaSuite.email() || '').trim();
@@ -937,8 +984,31 @@ function loadId() {
   } catch {
     /* native absent */
   }
-  const local = email.split('@')[0] || 'Paul';
-  name = local.charAt(0).toUpperCase() + local.slice(1);
+  if (!email) {
+    try {
+      const stored = String(localStorage.getItem('hubera-maps-email') || '').trim();
+      if (stored && stored.includes('@')) email = stored;
+    } catch {
+      /* private mode */
+    }
+  }
+  const low = email.toLowerCase();
+  // Fuite : e-mail owner resté en localStorage (Maps 0.1.11→0.1.124) sans session.
+  if (low && OWNER_LEAK_EMAILS.has(low) && !suiteTokenPresent()) {
+    email = '';
+    try {
+      localStorage.removeItem('hubera-maps-email');
+    } catch {
+      /* ignore */
+    }
+  }
+  if (email) {
+    const local = email.split('@')[0] || 'Compte';
+    name = local.charAt(0).toUpperCase() + local.slice(1);
+  } else {
+    email = '';
+    name = HUBERA_GUEST.name;
+  }
   return { email, name };
 }
 
@@ -948,8 +1018,8 @@ function paintId() {
   const who = document.querySelector('.drawer .who');
   const avatars = [document.getElementById('btnUser'), document.getElementById('drawerAvatar')];
   if (who) who.textContent = id.name;
-  if (mail) mail.textContent = id.email;
-  const letter = (id.name || 'P').charAt(0).toUpperCase();
+  if (mail) mail.textContent = id.email || 'Non connecté';
+  const letter = (id.name || 'C').charAt(0).toUpperCase();
   avatars.forEach((a) => {
     if (a) a.textContent = letter;
   });
@@ -1202,33 +1272,10 @@ async function geocodeMissingContacts() {
   paintContactPins();
 }
 
-function mergeSeedContacts(seed) {
-  if (!Array.isArray(seed) || !seed.length) return;
-  const geo = loadContactGeo();
-  for (const s of seed) {
-    if (!s || !s.query || !Number.isFinite(s.lat) || !Number.isFinite(s.lon)) continue;
-    geo[s.query] = { lat: s.lat, lon: s.lon };
-    const exists = huberaContacts.some(
-      (c) => (c.name || '') === (s.name || '') || (c.short || '') === (s.short || ''),
-    );
-    if (!exists) {
-      huberaContacts.push({
-        name: s.name,
-        short: s.short,
-        email: '',
-        profile: {
-          given_name: (s.short || '').split(' ')[0] || '',
-          family_name: (s.short || '').split(' ').slice(1).join(' '),
-          addresses: [{ street: s.query, lat: s.lat, lon: s.lon }],
-        },
-        lat: s.lat,
-        lon: s.lon,
-        query: s.query,
-        label: s.label,
-      });
-    }
-  }
-  saveContactGeo(geo);
+function mergeSeedContacts(_seed) {
+  // Ancien seed public = contacts perso Paul (fuite multi-comptes).
+  // Les contacts viennent uniquement de HuberaSuite.refreshContacts() pour l’utilisateur connecté.
+  return;
 }
 
 function applyHuberaContacts(list) {
@@ -1872,34 +1919,50 @@ function decodePolyline(str, precision) {
 }
 
 async function motisPlan(from, to, signal) {
-  const url =
+  const urls = [
     `https://api.transitous.org/api/v2/plan?fromPlace=${from.lat},${from.lon}` +
-    `&toPlace=${to.lat},${to.lon}&numItineraries=4&transitModes=TRANSIT&directModes=WALK`;
-  const res = await fetch(url, { headers: FETCH_HDR, signal });
-  if (!res.ok) return [];
-  const data = await res.json();
-  return (data.itineraries || []).map((it) => {
-    const coords = [];
-    for (const leg of it.legs || []) {
-      const g = leg.legGeometry || {};
-      for (const p of decodePolyline(g.points || '', g.precision || 6)) coords.push(p);
+      `&toPlace=${to.lat},${to.lon}&numItineraries=4&transitModes=TRANSIT&directModes=WALK`,
+    // Miroir / secours (même schéma Motis v2)
+    `https://transitous.org/api/v2/plan?fromPlace=${from.lat},${from.lon}` +
+      `&toPlace=${to.lat},${to.lon}&numItineraries=4&transitModes=TRANSIT&directModes=WALK`,
+  ];
+  let data = null;
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { headers: FETCH_HDR, signal });
+      if (!res.ok) continue;
+      data = await res.json();
+      if (data && (data.itineraries || []).length) break;
+    } catch {
+      if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
     }
-    const dist = (it.legs || []).reduce((s, l) => s + (Number(l.distance) || 0), 0);
-    const modes = [
-      ...new Set((it.legs || []).map((l) => l.mode).filter((m) => m && m !== 'WALK')),
-    ];
-    const corr = it.transfers || 0;
-    return {
-      km: Math.round((dist / 1000) * 10) / 10,
-      min: Math.round((it.duration || 0) / 60),
-      geometry: { type: 'LineString', coordinates: coords },
-      steps: (it.legs || []).map((l) => ({
-        name: (l.to && l.to.name) || l.mode || '',
-        maneuver: { type: l.mode === 'WALK' ? 'continue' : 'on ramp' },
-      })),
-      transitLabel: `${modes.join(' · ') || 'Marche'} · ${corr} corr.`,
-    };
-  });
+  }
+  if (!data) return [];
+  return (data.itineraries || [])
+    .map((it) => {
+      const coords = [];
+      for (const leg of it.legs || []) {
+        const g = leg.legGeometry || {};
+        for (const p of decodePolyline(g.points || '', g.precision || 6)) coords.push(p);
+      }
+      if (coords.length < 2) return null;
+      const dist = (it.legs || []).reduce((s, l) => s + (Number(l.distance) || 0), 0);
+      const modes = [
+        ...new Set((it.legs || []).map((l) => l.mode).filter((m) => m && m !== 'WALK')),
+      ];
+      const corr = it.transfers || 0;
+      return {
+        km: Math.round((dist / 1000) * 10) / 10,
+        min: Math.round((it.duration || 0) / 60),
+        geometry: { type: 'LineString', coordinates: coords },
+        steps: (it.legs || []).map((l) => ({
+          name: (l.to && l.to.name) || l.mode || '',
+          maneuver: { type: l.mode === 'WALK' ? 'continue' : 'on ramp' },
+        })),
+        transitLabel: `${modes.join(' · ') || 'Marche'} · ${corr} corr.`,
+      };
+    })
+    .filter(Boolean);
 }
 
 function overpassEndpoints() {
@@ -2354,8 +2417,17 @@ async function collectRoutes(from, to, signal) {
 
   if (travelMode === 'transit') {
     try {
-      const routes = classifyRoutes(await motisPlan(from, to, signal));
-      routeCache.set(key, { at: Date.now(), routes });
+      let routes = classifyRoutes(await motisPlan(from, to, signal));
+      // Secours : si TC indisponible, proposer la marche (comme Google « À pied »).
+      if (!routes.length) {
+        const foot = await settledRoutes([osrmPath([from, to], 1, '', signal)]);
+        routes = classifyRoutes(foot).map((r) => ({
+          ...r,
+          transitLabel: r.transitLabel || 'Marche (TC indisponible)',
+        }));
+        if (routes.length) toast('Transports indisponibles — itinéraire à pied proposé.');
+      }
+      if (routes.length) routeCache.set(key, { at: Date.now(), routes });
       return routes;
     } catch {
       return [];
@@ -2371,6 +2443,10 @@ async function collectRoutes(from, to, signal) {
         await settledRoutes(vias.map((via) => osrmPath([from, via, to], 0, '', signal))),
       );
     }
+  }
+  // Piéton / vélo : 2e essai via le routeur OSM.de si le 1er endpoint est froid.
+  if (!collected.length && (travelMode === 'walk' || travelMode === 'hike' || travelMode === 'bike')) {
+    collected = await settledRoutes([osrmPath([from, to], 1, '', signal)]);
   }
   const routes = classifyRoutes(collected);
   if (routes.length) routeCache.set(key, { at: Date.now(), routes });
@@ -2591,8 +2667,18 @@ function isCarMode() {
   return travelMode === 'car';
 }
 
+function fuelTripLive() {
+  return !!(mapsStartedFuel || Number(fuelTrip) > 0);
+}
+
+/** Fuel dans Maps : trajet voiture, ou suivi libre déjà démarré. */
+function fuelUiAllowed() {
+  return isCarMode() || fuelTripLive();
+}
+
 function paintModes() {
   document.querySelectorAll('.mode').forEach((b) => b.classList.toggle('on', b.dataset.mode === travelMode));
+  syncFuelChrome();
 }
 
 function modesRowHtml() {
@@ -3268,15 +3354,31 @@ function setFuelLogo(on) {
 }
 
 function syncFuelChrome() {
-  const live = !!(mapsStartedFuel || Number(fuelTrip) > 0);
+  const live = fuelTripLive();
+  const allow = fuelUiAllowed();
   const logo = fuelLogoOn();
-  document.body.classList.toggle('fuel-logo', logo);
+  document.body.classList.toggle('fuel-logo', logo && allow);
   document.body.classList.toggle('fuel-live', live);
+  document.body.classList.toggle('fuel-ui-off', !allow);
   document.body.classList.toggle('fuel-card-collapsed', fuelCardCollapsed);
   const fab = document.getElementById('fuelFab');
   const radial = document.getElementById('fuelRadial');
   const handle = document.getElementById('fuelCardHandle');
   const foldBtns = ['fuelCardFold', 'fuelPageFold'].map((id) => document.getElementById(id));
+  if (!allow) {
+    fuelEl.hidden = true;
+    if (fab) fab.hidden = true;
+    if (radial) {
+      radial.hidden = true;
+      radial.classList.remove('open');
+    }
+    if (handle) handle.hidden = true;
+    if (activeTab === 'trips' || activeTab === 'fills' || activeTab === 'budget') {
+      setTab('maps');
+    }
+    paintFuelStats();
+    return;
+  }
   if (logo) {
     fuelEl.hidden = true;
     if (fab) {
@@ -3646,7 +3748,12 @@ function pingIdleGeo() {
   if (!appVisible || navigating || document.hidden || activeTab !== 'maps') return;
   if (!navigator.geolocation) return;
   navigator.geolocation.getCurrentPosition(
-    (pos) => setMe(pos.coords.latitude, pos.coords.longitude, false),
+    (pos) => {
+      setMe(pos.coords.latitude, pos.coords.longitude, false);
+      // Limite de zone même sans conduite démarrée.
+      lastRoadAt = 0;
+      void refreshRoad(pos.coords.latitude, pos.coords.longitude);
+    },
     () => {},
     geoOpts({ accurate: false, freshMs: 0, timeout: 6000 }),
   );
@@ -3748,6 +3855,24 @@ function openLocRemedy() {
   } catch {
     /* webview */
   }
+  // iOS Safari / PWA / WebView : la permission ne part que depuis un geste utilisateur.
+  // Toujours appeler getCurrentPosition dans le même tick que le tap « Autoriser »,
+  // même si un pont natif existe (sinon iOS ne montre jamais la boîte système).
+  if (navigator.geolocation) {
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (!pos?.coords) return;
+          setMe(pos.coords.latitude, pos.coords.longitude, true);
+          hideLocBanner();
+        },
+        (err) => showLocFailure(err),
+        geoOpts({ accurate: true, freshMs: 0, timeout: 20000 }),
+      );
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 function explainLocMiss() {
@@ -3768,8 +3893,13 @@ function requestPreciseLoc() {
     const snap = nativeLocSnapshot();
     if (snap.native) {
       try {
-        if (snap.perm === false) snap.native.requestPermission();
-        else snap.native.startWatch?.();
+        if (snap.perm === false) {
+          // iOS WebView : requestPermission doit rester synchrone au geste ;
+          // openLocRemedy / locEnable le rappellent aussi.
+          snap.native.requestPermission();
+        } else {
+          snap.native.startWatch?.();
+        }
       } catch {
         /* webview */
       }
@@ -3861,7 +3991,24 @@ document.addEventListener('visibilitychange', () => {
   else window.__mapsEnergyResume();
 });
 
+function requestStopNav() {
+  const sheet = document.getElementById('stopConfirm');
+  const text = document.getElementById('stopConfirmText');
+  if (!sheet) {
+    collapseNavHud();
+    return;
+  }
+  if (text) {
+    text.textContent = mapsStartedFuel || Number(fuelTrip) > 0
+      ? 'Le guidage et le suivi Fuel s’arrêtent. Confirme seulement si tu as vraiment fini.'
+      : 'Le guidage s’arrête. Confirme seulement si tu as vraiment fini.';
+  }
+  sheet.hidden = false;
+}
+
 function collapseNavHud() {
+  const sheet = document.getElementById('stopConfirm');
+  if (sheet) sheet.hidden = true;
   if (mapsStartedFuel) {
     fuelStopTracking();
     return;
@@ -3958,6 +4105,7 @@ let lastPaintedLimit = null;
 
 function paintSpeedLimit(kmh, zone, known) {
   if (!roadNameEl) return;
+  // Visible aussi hors guidage (limite de la zone actuelle).
   if (roadSignEl) roadSignEl.hidden = false;
   const signs = document.getElementById('navSigns');
   if (signs) signs.hidden = false;
@@ -4214,20 +4362,28 @@ function placeNick(place, fallback) {
 function finishAssignPlace(kind, lat, lon, label) {
   const p = loadPlaces();
   const prev = kind === 'home' || kind === 'work' ? p[kind] : null;
-  const nick =
+  let nick =
     (prev && prev.nick) ||
     (kind === 'home' ? 'Maison' : kind === 'work' ? 'Travail' : '');
   const rec = { lat, lon, label, nick };
   if (kind === 'home' || kind === 'work') p[kind] = rec;
   else {
     const rest = Array.isArray(p.saved) ? p.saved.slice() : [];
-    const i = rest.findIndex((x) => x && Math.abs(x.lat - lat) < 1e-5 && Math.abs(x.lon - lon) < 1e-5);
-    if (i >= 0) rest[i] = { ...rest[i], ...rec };
-    else rest.unshift(rec);
+    const editI = pendingSavedEditIndex;
+    if (editI != null && editI >= 0 && editI < rest.length && rest[editI]) {
+      const keepNick = rest[editI].nick || '';
+      rest[editI] = { ...rest[editI], lat, lon, label, nick: keepNick || nick };
+      nick = rest[editI].nick || label;
+    } else {
+      const i = rest.findIndex((x) => x && Math.abs(x.lat - lat) < 1e-5 && Math.abs(x.lon - lon) < 1e-5);
+      if (i >= 0) rest[i] = { ...rest[i], ...rec };
+      else rest.unshift(rec);
+    }
     p.saved = rest.slice(0, 24);
   }
   savePlaces(p);
   pendingAssign = null;
+  pendingSavedEditIndex = null;
   showHits([]);
   qEl.value = '';
   qEl.placeholder = 'Rechercher ici';
@@ -4242,6 +4398,7 @@ function finishAssignPlace(kind, lat, lon, label) {
 
 function startAssign(kind) {
   pendingAssign = kind;
+  if (kind !== 'saved') pendingSavedEditIndex = null;
   const p = loadPlaces();
   const cur = kind === 'home' || kind === 'work' ? p[kind] : null;
   const title = kind === 'home' ? 'Maison' : kind === 'work' ? 'Travail' : 'Lieu';
@@ -4257,6 +4414,29 @@ function startAssign(kind) {
     if (n > 0) qEl.setSelectionRange(n, n);
   } catch {
     /* le texte du raccourci reste en place */
+  }
+  void showSuggestHits(qEl.value);
+}
+
+/** Remplacer une adresse enregistrée (swipe Modifier / feuille). */
+function startAssignSaved(index) {
+  const p = loadPlaces();
+  const cur = (p.saved || [])[Number(index)];
+  pendingAssign = 'saved';
+  pendingSavedEditIndex = Number(index);
+  const title = cur ? placeNick(cur, (cur.label || '').split(',')[0] || 'Lieu') : 'Lieu';
+  qEl.value = cur && cur.label ? cur.label : '';
+  qEl.placeholder = cur
+    ? `${title} — cherche une nouvelle adresse`
+    : 'Lieu : adresse ou ma position';
+  syncClear();
+  setTab('maps');
+  qEl.focus();
+  try {
+    const n = qEl.value.length;
+    if (n > 0) qEl.setSelectionRange(n, n);
+  } catch {
+    /* */
   }
   void showSuggestHits(qEl.value);
 }
@@ -4337,7 +4517,8 @@ function openPlaceActions(kind, place) {
   if (edit) {
     edit.onclick = () => {
       closePlaceSheet();
-      startAssign(kind);
+      if (kind === 'saved' && place && place._i != null) startAssignSaved(Number(place._i));
+      else startAssign(kind);
     };
   }
   if (nickBtn) {
@@ -4677,6 +4858,15 @@ async function overpassJson(query) {
   return null;
 }
 
+function foldPoiName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 function poiKindOf(tags) {
   if (!tags) return null;
   if (tags.amenity === 'fuel' || tags.highway === 'services') return 'fuel';
@@ -4968,37 +5158,67 @@ async function refreshMapPlaces() {
   const n = b.getNorth().toFixed(4);
   const e = b.getEast().toFixed(4);
   const wantPoi = z >= 14;
+  // Inclure les ways (stations souvent dessinées en surface) + out center
+  // pour ne pas coller un nœud d’angle loin de la nationale.
   const q =
     `[out:json][timeout:8];(` +
     `node(${s},${w},${n},${e})[place~"^(city|town|village)$"];` +
     (wantPoi
       ? `node(${s},${w},${n},${e})[amenity=fuel];` +
+        `way(${s},${w},${n},${e})[amenity=fuel];` +
         `node(${s},${w},${n},${e})[amenity=pharmacy];` +
-        (z >= 15 ? `node(${s},${w},${n},${e})[shop=supermarket];` : '') +
+        `way(${s},${w},${n},${e})[amenity=pharmacy];` +
+        (z >= 15
+          ? `node(${s},${w},${n},${e})[shop=supermarket];` +
+            `way(${s},${w},${n},${e})[shop=supermarket];`
+          : '') +
         (z >= 16 ? `node(${s},${w},${n},${e})[amenity=atm];` : '')
       : '') +
-    `);out body 80;`;
+    `);out center body 120;`;
   const data = await overpassJson(q);
   if (!data) return;
   const cities = [];
   const pois = [];
+  const seenPoi = new Set();
   for (const el of data.elements || []) {
-    if (!Number.isFinite(el.lat) || !Number.isFinite(el.lon)) continue;
+    const lat = Number.isFinite(el.lat) ? el.lat : el.center && el.center.lat;
+    const lon = Number.isFinite(el.lon) ? el.lon : el.center && el.center.lon;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
     const tags = el.tags || {};
     const name = tags.name || tags.brand;
     if (!name) continue;
     if (tags.place === 'city' || tags.place === 'town' || tags.place === 'village') {
-      cities.push({ name, lat: el.lat, lon: el.lon, rank: tags.place });
+      cities.push({ name, lat, lon, rank: tags.place });
       continue;
     }
     const kind = poiKindOf(tags);
     if (!kind) continue;
+    const area = el.type === 'way' ? 1 : 0;
+    const fold = foldPoiName(name);
+    // Même station (nœud + surface) : garder le centre de la way.
+    let replaced = false;
+    for (let i = 0; i < pois.length; i++) {
+      const p = pois[i];
+      if (p.kind !== kind || foldPoiName(p.name) !== fold) continue;
+      const d = metersBetween({ lat: p.lat, lon: p.lon }, { lat, lon });
+      if (d > 120) continue;
+      if (area >= (p._area || 0)) {
+        pois[i] = { name, lat, lon, kind, meta: poiMeta(tags, kind), _area: area };
+      }
+      replaced = true;
+      break;
+    }
+    if (replaced) continue;
+    const dedupe = `${kind}|${fold}|${lat.toFixed(4)}|${lon.toFixed(4)}`;
+    if (seenPoi.has(dedupe)) continue;
+    seenPoi.add(dedupe);
     pois.push({
       name,
-      lat: el.lat,
-      lon: el.lon,
+      lat,
+      lon,
       kind,
       meta: poiMeta(tags, kind),
+      _area: area,
     });
   }
   cities.sort((a, b) => {
@@ -5006,7 +5226,10 @@ async function refreshMapPlaces() {
     return (r[a.rank] || 9) - (r[b.rank] || 9);
   });
   const slimCities = cities.slice(0, 40);
-  const slimPois = pois.slice(0, 60);
+  const slimPois = pois
+    .sort((a, b) => (b._area || 0) - (a._area || 0))
+    .slice(0, 60)
+    .map(({ _area, ...rest }) => rest);
   store[key] = { at: Date.now(), cities: slimCities, pois: slimPois };
   placesCacheWrite(store);
   lastPlacesKey = key;
@@ -5033,22 +5256,77 @@ function renderChips() {
   placeRoadSign();
 }
 
+function paintHomeWorkButtons() {
+  const p = loadPlaces();
+  const homeBtn = document.getElementById('btnDefineHome');
+  const workBtn = document.getElementById('btnDefineWork');
+  if (homeBtn) {
+    homeBtn.textContent = p.home ? 'Modifier Maison' : 'Ajouter Maison';
+    homeBtn.setAttribute('aria-label', homeBtn.textContent);
+  }
+  if (workBtn) {
+    workBtn.textContent = p.work ? 'Modifier Travail' : 'Ajouter Travail';
+    workBtn.setAttribute('aria-label', workBtn.textContent);
+  }
+}
+
 function renderSaved() {
   const p = loadPlaces();
+  paintHomeWorkButtons();
   const rows = [];
+  const card = (opts) => {
+    const {
+      shown,
+      meta,
+      editAttr,
+      delAttr,
+      openAttr,
+      empty,
+    } = opts;
+    if (empty) {
+      return (
+        `<div class="place-card place-card-empty">` +
+          `<button type="button" class="place-row" ${openAttr}><strong>${esc(shown)}</strong>` +
+          `<span class="place-meta">${esc(meta)}</span></button></div>`
+      );
+    }
+    return (
+      `<div class="place-swipe" data-swipe="1">` +
+        `<div class="place-actions-bg">` +
+          `<button type="button" class="place-act edit" ${editAttr} aria-label="Modifier ${esc(shown)}">Modifier</button>` +
+          `<button type="button" class="place-act del" ${delAttr} aria-label="Supprimer ${esc(shown)}">Supprimer</button>` +
+        `</div>` +
+        `<div class="place-card place-front">` +
+          `<button type="button" class="place-row" ${openAttr}>` +
+            `<strong>${esc(shown)}</strong>` +
+            `<span class="place-meta">${esc(meta)}</span>` +
+          `</button>` +
+          `<span class="place-hint">← glisser</span>` +
+        `</div>` +
+      `</div>`
+    );
+  };
   const add = (key, title, place) => {
     if (!place) {
       rows.push(
-        `<div class="place-line"><button type="button" class="place-edit" data-assign="${key}" aria-label="Ajouter ${esc(title)}">✎</button>` +
-          `<button type="button" class="place-row" data-assign="${key}">Ajouter ${esc(title)}</button></div>`,
+        card({
+          shown: `Ajouter ${title}`,
+          meta: 'Pas encore défini',
+          openAttr: `data-assign="${key}"`,
+          empty: true,
+        }),
       );
       return;
     }
     const shown = placeNick(place, title);
     rows.push(
-      `<div class="place-line"><button type="button" class="place-edit" data-assign="${key}" aria-label="Modifier ${esc(shown)}">✎</button>` +
-        `<button type="button" class="place-del" data-del="${key}" aria-label="Supprimer ${esc(shown)}">✕</button>` +
-        `<button type="button" class="place-row" data-place="${key}"><strong>${esc(shown)}</strong> · ${esc(place.label)}</button></div>`,
+      card({
+        shown,
+        meta: place.label || '',
+        editAttr: `data-assign="${key}"`,
+        delAttr: `data-del="${key}"`,
+        openAttr: `data-place="${key}"`,
+      }),
     );
   };
   add('home', 'Maison', p.home);
@@ -5057,9 +5335,13 @@ function renderSaved() {
     if (!r) return;
     const shown = placeNick(r, (r.label || '').split(',')[0] || 'Lieu');
     rows.push(
-      `<div class="place-line"><button type="button" class="place-edit" data-saved-edit="${i}" aria-label="Modifier ${esc(shown)}">✎</button>` +
-        `<button type="button" class="place-del" data-saved-del="${i}" aria-label="Supprimer ${esc(shown)}">✕</button>` +
-        `<button type="button" class="place-row" data-saved="${i}"><strong>${esc(shown)}</strong> · ${esc(r.label || '')}</button></div>`,
+      card({
+        shown,
+        meta: r.label || '',
+        editAttr: `data-saved-edit="${i}"`,
+        delAttr: `data-saved-del="${i}"`,
+        openAttr: `data-saved="${i}"`,
+      }),
     );
   });
   const rest = p.recents;
@@ -5072,10 +5354,77 @@ function renderSaved() {
     if (seen.has(r.label)) continue;
     seen.add(r.label);
     rows.push(
-      `<button type="button" class="place-row" data-lat="${r.lat}" data-lon="${r.lon}" data-label="${esc(r.label)}">${esc(r.label)}</button>`,
+      card({
+        shown: r.label,
+        meta: 'Récent',
+        openAttr: `data-lat="${r.lat}" data-lon="${r.lon}" data-label="${esc(r.label)}"`,
+        empty: true,
+      }),
     );
   }
-  savedList.innerHTML = rows.join('') || '<p>Aucun lieu pour l’instant.</p>';
+  savedList.innerHTML = rows.join('') || '<p class="saved-empty">Aucun lieu pour l’instant. Ajoute Maison ou Travail ci-dessus.</p>';
+  bindSavedSwipe();
+}
+
+function bindSavedSwipe() {
+  if (!savedList || savedList.dataset.swipeBound === '1') return;
+  savedList.dataset.swipeBound = '1';
+  let state = null;
+  const closeAll = (except) => {
+    savedList.querySelectorAll('.place-swipe.open').forEach((el) => {
+      if (except && el === except) return;
+      el.classList.remove('open');
+      const front = el.querySelector('.place-front');
+      if (front) front.style.transform = '';
+    });
+  };
+  savedList.addEventListener(
+    'touchstart',
+    (e) => {
+      const row = e.target.closest('.place-swipe');
+      if (!row || e.target.closest('.place-act')) return;
+      const t = e.changedTouches[0];
+      state = { row, x0: t.clientX, y0: t.clientY, dx: 0, locked: null };
+      closeAll(row);
+    },
+    { passive: true },
+  );
+  savedList.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!state) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - state.x0;
+      const dy = t.clientY - state.y0;
+      if (state.locked == null) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        state.locked = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+      }
+      if (state.locked !== 'h') {
+        state = null;
+        return;
+      }
+      e.preventDefault();
+      state.dx = Math.min(0, Math.max(-120, dx));
+      const front = state.row.querySelector('.place-front');
+      if (front) front.style.transform = `translateX(${state.dx}px)`;
+    },
+    { passive: false },
+  );
+  const end = () => {
+    if (!state) return;
+    const front = state.row.querySelector('.place-front');
+    if (state.dx < -56) {
+      state.row.classList.add('open');
+      if (front) front.style.transform = 'translateX(-112px)';
+    } else {
+      state.row.classList.remove('open');
+      if (front) front.style.transform = '';
+    }
+    state = null;
+  };
+  savedList.addEventListener('touchend', end, { passive: true });
+  savedList.addEventListener('touchcancel', end, { passive: true });
 }
 
 function fmtBytes(n) {
@@ -5095,7 +5444,71 @@ function appVersionLabel() {
   } catch {
     /* web */
   }
-  return '0.1.77';
+  return '0.1.131';
+}
+
+function paintDrawerVersion() {
+  const el = document.getElementById('drawerVersion');
+  if (!el) return;
+  el.textContent = `Maps · ${appVersionLabel()}`;
+}
+
+let versionNotesCache = null;
+
+async function loadVersionNotes() {
+  if (versionNotesCache) return versionNotesCache;
+  const fallback = [
+    { version: '0.1.129', notes: 'Fuel seulement en voiture ou suivi libre · Maison/Travail = Modifier · notes de version dans le drawer · OTA apk https.' },
+    { version: '0.1.128', notes: 'OTA : URL apk absolue (fin du « no protocol ») · purge seed contacts Paul · guest Hubera ID.' },
+    { version: '0.1.122', notes: 'Paramètres en cartes, comme Fuel.' },
+  ];
+  try {
+    const res = await fetch('/updates.json', { cache: 'no-store' });
+    if (res.ok) {
+      const j = await res.json();
+      const hist = Array.isArray(j.notesHistory) ? j.notesHistory : [];
+      const cur =
+        j.notes || (j.canonical && j.canonical.notes)
+          ? [{ version: j.version || appVersionLabel(), notes: j.notes || j.canonical.notes }]
+          : [];
+      const merged = [];
+      const seen = new Set();
+      for (const row of cur.concat(hist).concat(fallback)) {
+        if (!row || !row.notes) continue;
+        const key = `${row.version || ''}|${row.notes}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push({ version: row.version || '—', notes: String(row.notes) });
+      }
+      versionNotesCache = merged;
+      return merged;
+    }
+  } catch {
+    /* offline */
+  }
+  versionNotesCache = fallback;
+  return fallback;
+}
+
+async function openVersionNotes() {
+  const sheet = document.getElementById('versionNotesSheet');
+  const body = document.getElementById('versionNotesBody');
+  if (!sheet || !body) return;
+  body.innerHTML = '<p class="saved-empty">Chargement…</p>';
+  sheet.hidden = false;
+  closeDrawer();
+  const rows = await loadVersionNotes();
+  body.innerHTML = rows
+    .map(
+      (r) =>
+        `<div class="nv"><strong>${esc(r.version)}</strong><span>${esc(r.notes)}</span></div>`,
+    )
+    .join('');
+}
+
+function closeVersionNotes() {
+  const sheet = document.getElementById('versionNotesSheet');
+  if (sheet) sheet.hidden = true;
 }
 
 const FUEL_UX_OPTS = [
@@ -5273,6 +5686,8 @@ let lastFuelSnapAt = 0;
 let fuelSnapTries = 0;
 
 function requestFuelSnapshot(force) {
+  // En arrière-plan : pas de snapshot — Fuel répondait par hubera-maps:// et volait le 1er plan.
+  if (!force && (document.hidden || !appVisible)) return;
   const cached = loadFuelSnap();
   const hasVeh = (cached.vehicles || []).length > 0;
   if (!force && hasVeh && Date.now() - lastFuelSnapAt < 45000) return;
@@ -5280,6 +5695,7 @@ function requestFuelSnapshot(force) {
   const ok = fuelControl('snapshot');
   void fetchFuelViaHuberaId();
   window.setTimeout(() => {
+    if (document.hidden || !appVisible) return;
     const list = (loadFuelSnap().vehicles || []).length;
     if (list > 0) {
       fuelSnapTries = 0;
@@ -5699,7 +6115,7 @@ function renderFuelHome() {
   const openEmpty = document.getElementById('fuelHomeOpenEmpty');
   if (start) start.onclick = () => startFuelTrip();
   if (pause) pause.onclick = () => document.getElementById('btnPause')?.click();
-  if (stop) stop.onclick = () => fuelStopTracking();
+  if (stop) stop.onclick = () => requestStopNav();
   if (fill) fill.onclick = () => openFillSheet();
   if (openApp) openApp.onclick = () => openFuelApp();
   if (retry) retry.onclick = () => requestFuelSnapshot(true);
@@ -5918,9 +6334,11 @@ function applySetting(set, val) {
       toast('MAJ indisponible');
     }
   } else if (set === 'goto-offline') {
+    returnTo = 'settings';
     setTab('offline');
     return;
   } else if (set === 'fuelux') {
+    returnTo = 'settings';
     setTab('fuelux');
     return;
   }
@@ -6015,6 +6433,7 @@ window.__mapsOfflineEvent = function () {
 };
 
 function openDrawer() {
+  paintDrawerVersion();
   drawer.classList.add('open');
   drawer.setAttribute('aria-hidden', 'false');
   scrim.hidden = false;
@@ -6042,6 +6461,7 @@ function setTab(id) {
     fuelCardCollapsed = false;
     document.body.classList.remove('fuel-card-collapsed');
   }
+  if (id !== 'offline' && id !== 'fuelux') returnTo = 'maps';
   activeTab = id;
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === id));
   const pageFuel = document.getElementById('pageFuel');
@@ -6117,6 +6537,10 @@ window.__mapsBack = function () {
     return true;
   }
   if (window.__mapsDismissSearch()) return true;
+  if ((activeTab === 'offline' || activeTab === 'fuelux') && returnTo === 'settings') {
+    setTab('settings');
+    return true;
+  }
   if (activeTab === 'trips' || activeTab === 'saved' || activeTab === 'settings' || activeTab === 'offline' || activeTab === 'fuelux') {
     setTab('maps');
     return true;
@@ -6284,9 +6708,24 @@ document.getElementById('btnHere').addEventListener('click', () => {
 document.getElementById('btnMenu').addEventListener('click', openDrawer);
 document.getElementById('btnMenuNav').addEventListener('click', openDrawer);
 document.getElementById('btnStopNav').addEventListener('click', () => {
-  collapseNavHud();
-  renderAlts();
+  requestStopNav();
 });
+(() => {
+  const yes = document.getElementById('stopConfirmYes');
+  const no = document.getElementById('stopConfirmNo');
+  if (yes) {
+    yes.addEventListener('click', () => {
+      collapseNavHud();
+      renderAlts();
+    });
+  }
+  if (no) {
+    no.addEventListener('click', () => {
+      const sheet = document.getElementById('stopConfirm');
+      if (sheet) sheet.hidden = true;
+    });
+  }
+})();
 const tripInfoToggle = document.getElementById('tripInfoToggle');
 if (tripInfoToggle) tripInfoToggle.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -6338,7 +6777,7 @@ document.getElementById('btnSavedBack').addEventListener('click', () => setTab('
 const btnSettingsBack = document.getElementById('btnSettingsBack');
 if (btnSettingsBack) btnSettingsBack.addEventListener('click', () => setTab('maps'));
 const btnOfflineBack = document.getElementById('btnOfflineBack');
-if (btnOfflineBack) btnOfflineBack.addEventListener('click', () => setTab('maps'));
+if (btnOfflineBack) btnOfflineBack.addEventListener('click', () => setTab(returnTo === 'settings' ? 'settings' : 'maps'));
 const settingsBody = document.getElementById('settingsBody');
 if (settingsBody) {
   settingsBody.addEventListener('click', (e) => {
@@ -6377,6 +6816,31 @@ if (offlineBody) {
 }
 document.getElementById('btnDefineHome').addEventListener('click', () => startAssign('home'));
 document.getElementById('btnDefineWork').addEventListener('click', () => startAssign('work'));
+(() => {
+  const ver = document.getElementById('drawerVersion');
+  if (!ver) return;
+  let lastTap = 0;
+  const open = () => {
+    void openVersionNotes();
+  };
+  ver.addEventListener('click', () => {
+    const now = Date.now();
+    if (now - lastTap < 420) {
+      lastTap = 0;
+      open();
+      return;
+    }
+    lastTap = now;
+  });
+  ver.addEventListener('dblclick', (e) => {
+    e.preventDefault();
+    open();
+  });
+})();
+document.getElementById('versionNotesClose')?.addEventListener('click', closeVersionNotes);
+document.getElementById('versionNotesSheet')?.addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeVersionNotes();
+});
 scrim.addEventListener('click', closeDrawer);
 document.getElementById('btnCloseDrawer')?.addEventListener('click', (e) => {
   e.preventDefault();
@@ -6440,6 +6904,8 @@ document.addEventListener('pointerdown', (e) => {
   if (top && top.contains(t)) return;
   /* Le menu Fuel à droite (jauge, estimation, repli) ne ferme pas l’itinéraire et ne le démarre pas. */
   if (t.closest('#navSigns')) return;
+  // Bouger / zoomer la carte ne doit PAS enlever la sélection d’itinéraire.
+  if (t.closest('#map') || t.closest('.leaflet-container') || t.closest('.leaflet-pane')) return;
   dismissRoutePreview();
 }, true);
 
@@ -6473,10 +6939,13 @@ drawer.addEventListener('click', (e) => {
     const id = loadId();
     if (typeof HuberaSuite !== 'undefined' && HuberaSuite.openAccountChooser) {
       HuberaSuite.openAccountChooser();
-    } else {
+    } else if (id.email && suiteTokenPresent()) {
       toast(`Hubera ID · ${id.email}`);
+    } else {
+      // iOS / web : jamais toast « paul@ » fantôme — ouvrir connexion ou création Hubera ID
+      openHuberaIdLogin();
     }
-    if (typeof HuberaSuite !== 'undefined' && HuberaSuite.refreshContacts) {
+    if (id.email && typeof HuberaSuite !== 'undefined' && HuberaSuite.refreshContacts) {
       HuberaSuite.refreshContacts();
     }
   }
@@ -6508,19 +6977,18 @@ const btnFuelPageBack = document.getElementById('btnFuelPageBack');
 if (btnFuelPageBack) btnFuelPageBack.addEventListener('click', () => setTab('maps'));
 
 savedList.addEventListener('click', (e) => {
-  const edit = e.target.closest('.place-edit');
+  const edit = e.target.closest('.place-edit, .place-act.edit');
   if (edit && edit.dataset.assign) {
     startAssign(edit.dataset.assign);
     return;
   }
   if (edit && edit.dataset.savedEdit != null) {
-    const p = loadPlaces();
-    const rec = (p.saved || [])[Number(edit.dataset.savedEdit)];
-    if (rec) openPlaceActions('saved', { ...rec, _i: Number(edit.dataset.savedEdit) });
+    startAssignSaved(Number(edit.dataset.savedEdit));
     return;
   }
-  const del = e.target.closest('.place-del');
+  const del = e.target.closest('.place-del, .place-act.del');
   if (del && del.dataset.del) {
+    if (!window.confirm('Supprimer cette adresse ?')) return;
     const p = loadPlaces();
     p[del.dataset.del] = null;
     savePlaces(p);
@@ -6530,6 +6998,7 @@ savedList.addEventListener('click', (e) => {
     return;
   }
   if (del && del.dataset.savedDel != null) {
+    if (!window.confirm('Supprimer cette adresse ?')) return;
     const p = loadPlaces();
     p.saved = (p.saved || []).filter((_, i) => i !== Number(del.dataset.savedDel));
     savePlaces(p);
@@ -6589,7 +7058,7 @@ document.getElementById('btnFuelTrack').addEventListener('click', () => {
 const btnFuelUx = document.getElementById('btnFuelUx');
 if (btnFuelUx) btnFuelUx.addEventListener('click', () => setTab('fuelux'));
 const btnFuelUxBack = document.getElementById('btnFuelUxBack');
-if (btnFuelUxBack) btnFuelUxBack.addEventListener('click', () => setTab('maps'));
+if (btnFuelUxBack) btnFuelUxBack.addEventListener('click', () => setTab(returnTo === 'settings' ? 'settings' : 'maps'));
 const fuelUxBody = document.getElementById('fuelUxBody');
 if (fuelUxBody) {
   fuelUxBody.addEventListener('click', (e) => {
@@ -6631,17 +7100,32 @@ if (fuelFab && fuelRadial) {
       if (mapsStartedFuel) document.getElementById('btnPause')?.click();
       else startFuelTrip();
     }
-    else if (a === 'stop') fuelStopTracking();
+    else if (a === 'stop') requestStopNav();
     else if (a === 'fill') {
       const fillSheet = document.getElementById('fillSheet');
       if (fillSheet) fillSheet.hidden = false;
     } else if (a === 'history' || a === 'sheet') openFuelSheet();
   });
 }
-document.getElementById('locEnable')?.addEventListener('click', () => {
+let locEnableTapAt = 0;
+function onLocEnableTap(e) {
+  const now = Date.now();
+  if (now - locEnableTapAt < 450) return;
+  locEnableTapAt = now;
+  try {
+    e?.preventDefault?.();
+  } catch {
+    /* ignore */
+  }
   openLocRemedy();
   requestPreciseLoc();
-});
+}
+const locEnableBtn = document.getElementById('locEnable');
+if (locEnableBtn) {
+  // click + touchend : iOS Safari parfois ignore click sur bannière fixe
+  locEnableBtn.addEventListener('click', onLocEnableTap);
+  locEnableBtn.addEventListener('touchend', onLocEnableTap, { passive: false });
+}
 const poiCardClose = document.getElementById('poiCardClose');
 if (poiCardClose) poiCardClose.addEventListener('click', closePoiCard);
 const poiCardGo = document.getElementById('poiCardGo');
@@ -6883,7 +7367,7 @@ document.getElementById('btnPause').addEventListener('click', () => {
   paintFuelStats();
   toast(paused ? 'Pause — guidage et Fuel.' : 'Reprise.');
 });
-document.getElementById('btnStop').addEventListener('click', fuelStopTracking);
+document.getElementById('btnStop').addEventListener('click', () => requestStopNav());
 document.getElementById('btnFill').addEventListener('click', openFillSheet);
 document.getElementById('fillCancel').addEventListener('click', closeFillSheet);
 document.getElementById('fillSave').addEventListener('click', saveFillFromSheet);
@@ -6891,7 +7375,6 @@ document.getElementById('fillSave').addEventListener('click', saveFillFromSheet)
 bootLocate();
 startIdleGeo();
 
-setMusicDock(musicDockOn());
 syncVoiceBtn();
 syncChromeHeight();
 bindRouteCard();
@@ -6902,6 +7385,7 @@ if (window.ResizeObserver) {
 }
 window.addEventListener('resize', syncChromeHeight);
 paintModes();
+paintDrawerVersion();
 applyFuelFromQuery();
 paintId();
 try {
@@ -6910,34 +7394,11 @@ try {
   /* web */
 }
 function loadContactsSeed() {
-  const apply = (seed) => {
-    try {
-      mergeSeedContacts(Array.isArray(seed) ? seed : []);
-    } catch {
-      /* seed illisible */
-    }
-    paintContactPins();
-    renderSaved();
-  };
+  // Ne plus télécharger contacts-seed.json (données personnelles Paul) pour tous les comptes.
   try {
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', 'contacts-seed.json', true);
-    xhr.onload = () => {
-      const ok = xhr.status === 200 || (xhr.status === 0 && xhr.responseText);
-      if (!ok) {
-        apply([]);
-        return;
-      }
-      try {
-        apply(JSON.parse(xhr.responseText));
-      } catch {
-        apply([]);
-      }
-    };
-    xhr.onerror = () => apply([]);
-    xhr.send();
+    localStorage.removeItem(CONTACT_GEO_KEY);
   } catch {
-    apply([]);
+    /* ignore */
   }
 }
 loadContactsSeed();
@@ -6951,6 +7412,29 @@ syncClear();
 const nativeMusic = typeof HuberaMusic !== 'undefined';
 const musicSheetEl = document.getElementById('musicSheet');
 let lastMusicState = { title: '', artist: '', playing: false };
+
+// Dock Music masqué par défaut (« Rien en cours » n’apparaît qu’après tap ♪ ou lecture active).
+(function bootMusicDock() {
+  let playing = false;
+  if (nativeMusic) {
+    try {
+      const s = JSON.parse(HuberaMusic.stateJson());
+      playing = !!(s && s.playing && s.title);
+      if (s) lastMusicState = s;
+    } catch {
+      /* ignore */
+    }
+  }
+  if (playing) setMusicDock(true);
+  else {
+    try {
+      localStorage.setItem(MUSIC_KEY, '0');
+    } catch {
+      /* ignore */
+    }
+    setMusicDock(false);
+  }
+})();
 
 function musicEmptyTitle(s) {
   return (s && s.title) ? s.title : 'Rien en cours';

@@ -174,7 +174,10 @@ class InAppUpdate(private val activity: Activity) {
         ).firstOrNull { it != null && it.optString("package") == localPkg }
         if (slot != null) {
             val version = slot.optString("version")
-            val url = slot.optString("apk_url").ifBlank { slot.optString("apk") }
+            val url = absoluteApkUrl(
+                slot.optString("apk_url"),
+                slot.optString("apk"),
+            )
             if (version.isBlank() || url.isBlank()) return null
             val notes = slot.optString("notes").ifBlank {
                 feed.optString("notes").ifBlank { "" }
@@ -190,7 +193,11 @@ class InAppUpdate(private val activity: Activity) {
         val remotePkg = feed.optString("package")
         if (remotePkg.isNotBlank() && remotePkg != localPkg) return null
         val version = feed.optString("version")
-        val url = feed.optString("apk").ifBlank { feed.optString("apk_url") }
+        // Préférer apk_url https ; ne jamais passer un chemin relatif à URL() (« no protocol »).
+        val url = absoluteApkUrl(
+            feed.optString("apk_url"),
+            feed.optString("apk"),
+        )
         if (version.isBlank() || url.isBlank()) return null
         if (!isNewer(version, localName) && feed.optLong("versionCode", 0L) <= 0L) return null
         return Offer(
@@ -200,6 +207,17 @@ class InAppUpdate(private val activity: Activity) {
             apkUrl = url,
             sha256 = feed.optString("sha256"),
         )
+    }
+
+    /** https://… ou résolution d’un chemin /apk/… contre maps.hubera.cloud. */
+    private fun absoluteApkUrl(primary: String, fallback: String): String {
+        val candidates = listOf(primary.trim(), fallback.trim()).filter { it.isNotEmpty() }
+        val absolute = candidates.firstOrNull {
+            it.startsWith("https://", ignoreCase = true) || it.startsWith("http://", ignoreCase = true)
+        }
+        if (absolute != null) return absolute
+        val rel = candidates.firstOrNull { it.startsWith("/") } ?: return ""
+        return BASE_ORIGIN + rel
     }
 
     private fun startInstall() {
@@ -904,6 +922,7 @@ class InAppUpdate(private val activity: Activity) {
 
     companion object {
         const val INSTALL_URL = "https://maps.hubera.cloud/install"
+        private const val BASE_ORIGIN = "https://maps.hubera.cloud"
         private const val PREFS = "hubera_maps_update"
         private const val SNOOZE_UNTIL = "snooze_until"
         private const val SNOOZE_VERSION = "snooze_version"
