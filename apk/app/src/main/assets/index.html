@@ -669,6 +669,40 @@
     }
     .fuel-radial button.stop { background: #3f1d2e; color: #e94560; }
     .fuel-radial button.go-start { background: #16302a; color: #34d399; }
+    /* Signalement route type Waze — bas-droite pendant le guidage */
+    .report-fab {
+      display: none; position: absolute; z-index: 1300; right: 14px; left: auto;
+      bottom: calc(var(--chrome) + 10px + 52px + 10px);
+      width: 52px; height: 52px; border-radius: 16px; border: 0;
+      background: #f59e0b; color: #0f172a; place-items: center;
+      font-size: 22px; font-weight: 800; cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,.45); padding: 0;
+      transition: transform .15s ease, box-shadow .15s ease, background .2s ease;
+    }
+    body.nav .report-fab { display: grid; }
+    body.nav.freehand .report-fab,
+    body.nav.freehand .report-radial {
+      bottom: calc(var(--chrome) + 10px + 52px + 64px);
+    }
+    .report-fab.reported {
+      background: #34d399; color: #052e1f;
+      transform: scale(1.08);
+      box-shadow: 0 0 0 6px rgba(52, 211, 153, .35);
+    }
+    .report-radial {
+      display: none; position: absolute; z-index: 1301; right: 14px; left: auto;
+      bottom: calc(var(--chrome) + 10px + 52px + 70px); text-align: right;
+    }
+    .report-radial.open { display: block; animation: reportPop .18s ease-out; }
+    @keyframes reportPop {
+      from { opacity: 0; transform: translateY(8px) scale(.96); }
+      to { opacity: 1; transform: none; }
+    }
+    .report-radial button {
+      display: block; margin: 6px 0 6px auto; border: 0; background: #1a1a2e; color: #fff;
+      border-radius: 999px; padding: 8px 12px; font-weight: 700; font-size: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.4);
+    }
     body.fux-8 #map { bottom: 42%; }
     body.fux-8 .fuel-split {
       display: block; position: absolute; left: 0; right: 0; top: 58%; bottom: var(--chrome);
@@ -1330,6 +1364,15 @@
     <button type="button" data-rad="start" class="go-start">Démarrer</button>
     <button type="button" data-rad="fill">Plein</button>
     <button type="button" data-rad="sheet">Garage</button>
+  </div>
+  <button type="button" class="report-fab" id="reportFab" hidden aria-label="Que voyez-vous ?" title="Signaler">⚠+</button>
+  <div class="report-radial" id="reportRadial" hidden role="menu" aria-label="Que voyez-vous ?">
+    <button type="button" data-rep="traffic">Embouteillage</button>
+    <button type="button" data-rep="police">Police</button>
+    <button type="button" data-rep="crash">Accident</button>
+    <button type="button" data-rep="hazard">Danger</button>
+    <button type="button" data-rep="closure">Route fermée</button>
+    <button type="button" data-rep="lane">Voie bloquée</button>
   </div>
   <div class="loc-banner" id="locBanner" hidden>
     <span id="locBannerText">Position pas encore trouvée</span>

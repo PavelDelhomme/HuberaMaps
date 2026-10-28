@@ -3461,6 +3461,8 @@ function enterFreeHud(tripId) {
   startNavWatch(applyNavFix);
   startFuelPoll();
   setTripKeepAlive(true);
+  syncReportChrome();
+  setNativeLocAggressive(true);
   try { map.invalidateSize(); } catch { /* */ }
   if (me) applyNavCamera(me.lat, me.lon, true);
 }
@@ -4033,6 +4035,7 @@ function stopNavigation(opts) {
   try { window.HuberaTts?.stop?.(); } catch { /* ignore */ }
   setFollowNav(true);
   setTripKeepAlive(false);
+  setNativeLocAggressive(false);
   document.body.classList.remove('nav');
   searchForm.hidden = false;
   navBar.hidden = true;
@@ -4059,6 +4062,160 @@ function stopNavigation(opts) {
     radial.classList.remove('open');
   }
   syncFuelChrome();
+  syncReportChrome();
+}
+
+function syncReportChrome() {
+  const fab = document.getElementById('reportFab');
+  const radial = document.getElementById('reportRadial');
+  if (fab) fab.hidden = !navigating;
+  if (!navigating && radial) {
+    radial.hidden = true;
+    radial.classList.remove('open');
+  }
+  if (!navigating) clearExpiredReportPins();
+}
+
+const REPORT_TTL_MS = 15 * 60 * 1000;
+const REPORT_DEDUP_M = 50;
+const REPORT_DEDUP_MS = 2 * 60 * 1000;
+let reportLayer = null;
+const reportPinTimers = [];
+
+function haversineM(aLat, aLon, bLat, bLon) {
+  const R = 6371000;
+  const toR = (d) => (d * Math.PI) / 180;
+  const dLat = toR(bLat - aLat);
+  const dLon = toR(bLon - aLon);
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toR(aLat)) * Math.cos(toR(bLat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+function reportColors(kind) {
+  const mapC = {
+    traffic: '#f59e0b',
+    police: '#3b82f6',
+    crash: '#ef4444',
+    hazard: '#f97316',
+    closure: '#a855f7',
+    lane: '#eab308',
+  };
+  return mapC[kind] || '#f59e0b';
+}
+
+function ensureReportLayer() {
+  if (!reportLayer) reportLayer = L.layerGroup().addTo(map);
+  return reportLayer;
+}
+
+function clearExpiredReportPins() {
+  if (!reportLayer) return;
+  const now = Date.now();
+  reportLayer.eachLayer((layer) => {
+    const until = layer.__reportUntil || 0;
+    if (until && until < now) reportLayer.removeLayer(layer);
+  });
+}
+
+function addReportPin(entry) {
+  if (!Number.isFinite(entry.lat) || !Number.isFinite(entry.lon)) return;
+  const layer = ensureReportLayer();
+  const until = (entry.at || Date.now()) + REPORT_TTL_MS;
+  const marker = L.circleMarker([entry.lat, entry.lon], {
+    radius: 9,
+    color: '#fff',
+    weight: 2,
+    fillColor: reportColors(entry.kind),
+    fillOpacity: 0.95,
+    pane: 'poiPane',
+  })
+    .bindTooltip(entry.label || entry.kind, { direction: 'top', opacity: 0.95 })
+    .addTo(layer);
+  marker.__reportUntil = until;
+  const left = Math.max(0, until - Date.now());
+  const t = setTimeout(() => {
+    try {
+      layer.removeLayer(marker);
+    } catch {
+      /* */
+    }
+  }, left);
+  reportPinTimers.push(t);
+}
+
+function closeReportRadial() {
+  const radial = document.getElementById('reportRadial');
+  if (!radial) return;
+  radial.hidden = true;
+  radial.classList.remove('open');
+}
+
+function pulseReportFab() {
+  const fab = document.getElementById('reportFab');
+  if (!fab) return;
+  fab.classList.remove('reported');
+  void fab.offsetWidth;
+  fab.classList.add('reported');
+  setTimeout(() => fab.classList.remove('reported'), 1600);
+}
+
+function setNativeLocAggressive(on) {
+  try {
+    window.HuberaLocation?.setNavMode?.(on ? 1 : 0);
+  } catch {
+    /* bridge absent (web) */
+  }
+}
+
+function submitRoadReport(kind) {
+  const labels = {
+    traffic: 'Embouteillage',
+    police: 'Police',
+    crash: 'Accident',
+    hazard: 'Danger',
+    closure: 'Route fermée',
+    lane: 'Voie bloquée',
+  };
+  const label = labels[kind] || kind;
+  const pos = me || smoothMe;
+  const entry = {
+    kind: String(kind || ''),
+    label,
+    at: Date.now(),
+    lat: pos && Number.isFinite(pos.lat) ? pos.lat : null,
+    lon: pos && Number.isFinite(pos.lon) ? pos.lon : null,
+  };
+  try {
+    const raw = localStorage.getItem('maps.roadReports');
+    const list = raw ? JSON.parse(raw) : [];
+    const next = Array.isArray(list) ? list : [];
+    const dup =
+      Number.isFinite(entry.lat) &&
+      next.some(
+        (r) =>
+          r &&
+          r.kind === entry.kind &&
+          Number.isFinite(r.lat) &&
+          Number.isFinite(r.lon) &&
+          entry.at - (r.at || 0) < REPORT_DEDUP_MS &&
+          haversineM(entry.lat, entry.lon, r.lat, r.lon) < REPORT_DEDUP_M,
+      );
+    if (dup) {
+      toast(`${label} déjà signalé près d’ici`);
+      closeReportRadial();
+      return;
+    }
+    next.unshift(entry);
+    localStorage.setItem('maps.roadReports', JSON.stringify(next.slice(0, 50)));
+  } catch {
+    /* ignore */
+  }
+  addReportPin(entry);
+  pulseReportFab();
+  closeReportRadial();
+  toast(`${label} signalé`);
 }
 
 async function beginGuidedNav(opts) {
@@ -4079,6 +4236,8 @@ async function beginGuidedNav(opts) {
   } else {
     toast('Guidage démarré');
   }
+  syncReportChrome();
+  setNativeLocAggressive(true);
   startNavWatch(applyNavFix);
   if (me) applyNavCamera(me.lat, me.lon, true);
 }
@@ -6546,8 +6705,14 @@ window.__mapsBack = function () {
     return true;
   }
   if (navigating) {
-    collapseNavHud();
-    renderAlts();
+    const stopSheet = document.getElementById('stopConfirm');
+    if (stopSheet && !stopSheet.hidden) {
+      collapseNavHud();
+      renderAlts();
+      return true;
+    }
+    // Comme le ✕ : confirmer avant d’arrêter — reste dans Maps (pas quitter l’app).
+    requestStopNav();
     return true;
   }
   if (altsEl && !altsEl.hidden) {
@@ -7106,6 +7271,45 @@ if (fuelFab && fuelRadial) {
       if (fillSheet) fillSheet.hidden = false;
     } else if (a === 'history' || a === 'sheet') openFuelSheet();
   });
+}
+const reportFab = document.getElementById('reportFab');
+const reportRadial = document.getElementById('reportRadial');
+if (reportFab && reportRadial) {
+  reportFab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = reportRadial.hidden;
+    reportRadial.hidden = !open;
+    reportRadial.classList.toggle('open', open);
+  });
+  reportRadial.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const b = e.target.closest('button[data-rep]');
+    if (!b) return;
+    submitRoadReport(b.dataset.rep);
+  });
+  map.on('click', () => closeReportRadial());
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (!reportRadial.classList.contains('open')) return;
+      if (e.target.closest('#reportFab, #reportRadial')) return;
+      closeReportRadial();
+    },
+    true,
+  );
+}
+syncReportChrome();
+// Restaure les pins locaux encore valides (< 15 min)
+try {
+  const raw = localStorage.getItem('maps.roadReports');
+  const list = raw ? JSON.parse(raw) : [];
+  const now = Date.now();
+  (Array.isArray(list) ? list : [])
+    .filter((r) => r && now - (r.at || 0) < REPORT_TTL_MS)
+    .slice(0, 20)
+    .forEach(addReportPin);
+} catch {
+  /* */
 }
 let locEnableTapAt = 0;
 function onLocEnableTap(e) {

@@ -23,6 +23,9 @@ import java.util.Locale
 /**
  * GPS natif → JS. Le WebView Chromium filtre souvent les positions mock
  * (`cmd location`) : sans ce pont, la pastille reste sur last-me réel.
+ *
+ * Cadence : idle ~2,5 s / 12 m ; guidage (navMode) ~1 s / 5 m.
+ * Providers : fused + GPS (pas tous les providers → moins de drain).
  */
 class LocationBridge(
     private val activity: Activity,
@@ -30,12 +33,13 @@ class LocationBridge(
 ) : LocationListener {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var watching = false
+    @Volatile private var navMode = false
     @Volatile private var last: Location? = null
     private val poll = object : Runnable {
         override fun run() {
             if (!watching) return
             pushLastKnown()
-            main.postDelayed(this, 900)
+            main.postDelayed(this, if (navMode) POLL_NAV_MS else POLL_IDLE_MS)
         }
     }
 
@@ -52,8 +56,6 @@ class LocationBridge(
     fun gpsEnabled(): Boolean {
         val lm = activity.getSystemService(LocationManager::class.java) ?: return false
         return runCatching {
-            // Interrupteur Android « Localisation ». isProviderEnabled(GPS) peut
-            // rester faux au démarrage ou en économie alors que le réglage est actif.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && lm.isLocationEnabled) {
                 return@runCatching true
             }
@@ -88,6 +90,17 @@ class LocationBridge(
         }
     }
 
+    /** 1 = guidage / Fuel live ; 0 = carte idle. */
+    @JavascriptInterface
+    fun setNavMode(on: Int) {
+        main.post {
+            val next = on != 0
+            if (navMode == next) return@post
+            navMode = next
+            if (watching) restartWatchUi()
+        }
+    }
+
     @JavascriptInterface
     fun startWatch() {
         main.post { startWatchUi() }
@@ -109,14 +122,29 @@ class LocationBridge(
         if (!hasPermission()) return
         val lm = activity.getSystemService(LocationManager::class.java) ?: return
         watching = true
-        for (p in providersOf(lm)) {
-            runCatching {
-                lm.requestLocationUpdates(p, 700L, 0f, this, Looper.getMainLooper())
-            }.onFailure { Log.w(TAG, "watch $p: ${it.message}") }
-        }
+        requestUpdates(lm)
         pushLastKnown()
         main.removeCallbacks(poll)
         main.post(poll)
+    }
+
+    private fun restartWatchUi() {
+        if (!watching) return
+        val lm = activity.getSystemService(LocationManager::class.java) ?: return
+        runCatching { lm.removeUpdates(this) }
+        requestUpdates(lm)
+        main.removeCallbacks(poll)
+        main.post(poll)
+    }
+
+    private fun requestUpdates(lm: LocationManager) {
+        val minTime = if (navMode) MIN_TIME_NAV_MS else MIN_TIME_IDLE_MS
+        val minDist = if (navMode) MIN_DIST_NAV_M else MIN_DIST_IDLE_M
+        for (p in providersOf(lm)) {
+            runCatching {
+                lm.requestLocationUpdates(p, minTime, minDist, this, Looper.getMainLooper())
+            }.onFailure { Log.w(TAG, "watch $p: ${it.message}") }
+        }
     }
 
     fun stopWatchUi() {
@@ -128,7 +156,22 @@ class LocationBridge(
     }
 
     private fun providersOf(lm: LocationManager): List<String> {
-        return lm.allProviders.filter { it.isNotBlank() }
+        val out = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= 31 &&
+            runCatching { lm.isProviderEnabled(LocationManager.FUSED_PROVIDER) }.getOrDefault(false)
+        ) {
+            out.add(LocationManager.FUSED_PROVIDER)
+        }
+        if (runCatching { lm.isProviderEnabled(LocationManager.GPS_PROVIDER) }.getOrDefault(false)) {
+            out.add(LocationManager.GPS_PROVIDER)
+        }
+        if (out.isEmpty()) {
+            // Fallback : network seul si GPS off.
+            if (runCatching { lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) }.getOrDefault(false)) {
+                out.add(LocationManager.NETWORK_PROVIDER)
+            }
+        }
+        return out.ifEmpty { lm.allProviders.filter { it.isNotBlank() }.take(2) }
     }
 
     private fun pushLastKnown() {
@@ -181,17 +224,18 @@ class LocationBridge(
 
     private fun push(loc: Location) {
         val prev = last
+        val debounce = if (navMode) 350L else 800L
         if (prev != null &&
             prev.latitude == loc.latitude &&
             prev.longitude == loc.longitude &&
             isMock(prev) == isMock(loc) &&
-            loc.time - prev.time < 400
+            loc.time - prev.time < debounce
         ) {
             return
         }
         last = loc
         val mock = isMock(loc)
-        Log.i(TAG, "fix ${loc.latitude},${loc.longitude} acc=${loc.accuracy} mock=$mock p=${loc.provider}")
+        Log.i(TAG, "fix ${loc.latitude},${loc.longitude} acc=${loc.accuracy} mock=$mock p=${loc.provider} nav=$navMode")
         val js = String.format(
             Locale.US,
             "window.__mapsNativeFix&&window.__mapsNativeFix(%f,%f,%f,%s)",
@@ -207,5 +251,11 @@ class LocationBridge(
 
     companion object {
         private const val TAG = "HuberaLoc"
+        private const val MIN_TIME_IDLE_MS = 2500L
+        private const val MIN_DIST_IDLE_M = 12f
+        private const val MIN_TIME_NAV_MS = 1000L
+        private const val MIN_DIST_NAV_M = 5f
+        private const val POLL_IDLE_MS = 2500L
+        private const val POLL_NAV_MS = 1000L
     }
 }
