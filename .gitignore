@@ -16,3 +16,12 @@ apk/local.properties
 
 *.idsig
 docs/*.png
+
+# Build OTA lab artifacts
+.ota-out/
+**/.ota-out/
+
+__pycache__/
+**/__pycache__/
+
+*.torrent
