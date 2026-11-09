@@ -143,6 +143,24 @@
     .hud-then { margin-top: 6px; color: #e2e8f0; font-size: 13px; font-weight: 650; }
     .hud-then .then-k { color: #94a3b8; font-weight: 700; margin-right: 6px; }
     .hud-meta { color: #94a3b8; font-size: 12px; margin-top: 8px; font-weight: 650; }
+    .trip-status-chip {
+      margin: 8px 12px 0;
+      align-self: flex-start;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: 0.01em;
+      background: #0ea5e9;
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(14, 165, 233, 0.35);
+    }
+    .trip-status-chip[data-state="paused"],
+    .trip-status-chip[data-state="still"] {
+      background: #f59e0b;
+      box-shadow: 0 4px 14px rgba(245, 158, 11, 0.35);
+    }
+    .trip-status-chip[hidden] { display: none !important; }
     body.nav.freehand .fab { border-color: #e94560; color: #e94560; }
     /* Guidage type Google : carte à plat, pas de 3D CSS (coins noirs + la carte « qui change »). */
     body.nav #map,

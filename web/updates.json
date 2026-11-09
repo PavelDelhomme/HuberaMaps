@@ -2,8 +2,8 @@
   "app": "hubera_maps",
   "slug": "maps",
   "name": "Hubera Maps",
-  "version": "0.1.133",
-  "versionCode": 133,
+  "version": "0.1.134",
+  "versionCode": 134,
   "package": "cloud.hubera.maps",
   "signingCertSha256": "3cf6c5321da1517e79940c9e25514a639b2c449e3eff7df7476876cbf6f4c11f",
   "min_supported": "0.1.0",
@@ -14,8 +14,12 @@
   "apkAvailable": true,
   "mandatory": false,
   "forceUpdate": false,
-  "notes": "0.1.133 : signalement type Waze (Que voyez-vous ?, pins 15 min, dédup) · retour confirme arrêt sans quitter · GPS idle allégé · Fuel libre a aussi le FAB Signaler.",
+  "notes": "0.1.134 : bracelet trajet en cours/pause · HUD guidage instructions · App Links https maps.hubera.cloud → APK.",
   "notesHistory": [
+    {
+      "version": "0.1.134",
+      "notes": "0.1.134 : bracelet trajet en cours/pause · HUD guidage instructions · App Links https maps.hubera.cloud → APK."
+    },
     {
       "version": "0.1.133",
       "notes": "signalement type Waze (Que voyez-vous ?, pins 15 min, dédup) · retour confirme arrêt sans quitter · GPS idle allégé · Fuel libre a aussi le FAB Signaler."

@@ -561,6 +561,36 @@ function liveFuelKm() {
   return Math.max(fuelLiveKm || 0, traceKm());
 }
 
+/** Bracelet visible : trajet démarré / en pause (Docs 9be646 / bracelet suivi). */
+function paintTripStatusChip(isPaused, isStill, hasRoute) {
+  let el = document.getElementById('tripStatusChip');
+  if (!el) {
+    const host = document.getElementById('topChrome') || document.body;
+    el = document.createElement('div');
+    el.id = 'tripStatusChip';
+    el.className = 'trip-status-chip';
+    el.setAttribute('aria-live', 'polite');
+    host.appendChild(el);
+  }
+  if (!navigating) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  el.hidden = false;
+  const mode = hasRoute ? 'Guidage' : 'Suivi libre';
+  if (isPaused) {
+    el.dataset.state = 'paused';
+    el.textContent = `${mode} · en pause`;
+  } else if (isStill) {
+    el.dataset.state = 'still';
+    el.textContent = `${mode} · à l'arrêt`;
+  } else {
+    el.dataset.state = 'live';
+    el.textContent = `${mode} · en cours`;
+  }
+}
+
 function paintFuelStats() {
   const el = document.getElementById('fuelStats');
   if (!el) return;
@@ -577,7 +607,7 @@ function paintFuelStats() {
   const bits = [];
   if (paused) bits.push('pause');
   else if (isStationary()) bits.push('à l\'arrêt');
-  bits.push(km > 0.05 ? `${km.toFixed(1)} km` : '0 km');
+  bits.push(km > 0.05 ? `parcouru ${km.toFixed(1)} km` : 'parcouru 0,0 km');
   if (dur) bits.push(dur);
   const shown = displaySpeedKmh();
   if (shown) bits.push(`${shown} km/h`);
@@ -3130,20 +3160,40 @@ function paintHud(choice) {
   const still = navigating && isStationary();
   const remainTxt = remainKm < 1 ? fmtDist(remainKm) : `${remainKm.toFixed(1)} km`;
   const eta = choice ? `reste ${remainTxt} · ${etaMin} min` : '';
-  const freeFuel = navigating && mapsStartedFuel && !choice;
+  const freeFuel = navigating && !choice;
+  paintTripStatusChip(paused, still, !!choice);
   if (freeFuel) {
     tickFuelDriveClock();
     const km = liveFuelKm();
     const dur = fuelDriveMs ? fmtFuelMins(fuelDriveMs) : '0 min';
-    if (distEl) distEl.textContent = km > 0.05 ? `${km.toFixed(1)} km` : '0 km';
-    if (iconEl) iconEl.textContent = still ? '⏸' : '⬆';
-    if (titleEl) titleEl.textContent = paused ? 'En pause' : still ? 'À l\'arrêt' : 'Tout droit';
-    if (subEl) subEl.textContent = '';
+    const kmTxt = km > 0.05 ? `${km.toFixed(1)} km` : '0,0 km';
+    if (distEl) distEl.textContent = kmTxt;
+    if (iconEl) iconEl.textContent = paused ? '⏸' : still ? '⏹' : '⬆';
+    if (titleEl) {
+      titleEl.textContent = paused
+        ? 'Suivi en pause'
+        : still
+          ? 'Suivi à l\'arrêt'
+          : 'Suivi libre en cours';
+    }
+    if (subEl) {
+      subEl.textContent = paused
+        ? 'Reprendre pour continuer le kilométrage'
+        : still
+          ? 'En attente de mouvement'
+          : 'Pas d’itinéraire — km + jauge Fuel';
+    }
     if (thenEl) {
       thenEl.hidden = true;
       thenEl.textContent = '';
     }
-    if (metaEl) metaEl.textContent = still ? `${dur} · à l'arrêt` : `${dur} · ${shown} km/h`;
+    if (metaEl) {
+      metaEl.textContent = paused
+        ? `${kmTxt} · ${dur} · en pause`
+        : still
+          ? `${kmTxt} · ${dur} · à l'arrêt`
+          : `${kmTxt} · ${dur} · ${shown} km/h`;
+    }
     const speedEl = document.getElementById('hudSpeed');
     const speedVal = document.getElementById('hudSpeedVal');
     if (speedEl) speedEl.hidden = false;
@@ -3151,23 +3201,33 @@ function paintHud(choice) {
     paintFuelStats();
     return;
   }
+  // Guidage A→B : distance jusqu’à la manœuvre + instruction type Google/Waze.
   if (distEl) distEl.textContent = step ? fmtDist(toManeuver) : '—';
-  if (iconEl) iconEl.textContent = still ? '⏸' : maneuverIcon(step?.maneuver?.type, step?.maneuver?.modifier);
+  if (iconEl) iconEl.textContent = paused || still ? '⏸' : maneuverIcon(step?.maneuver?.type, step?.maneuver?.modifier);
   if (titleEl) {
-    if (still) {
-      titleEl.textContent = paused ? 'En pause' : 'À l\'arrêt';
+    if (paused) {
+      titleEl.textContent = 'Guidage en pause';
+    } else if (still) {
+      titleEl.textContent = 'À l\'arrêt';
     } else {
+      const instruction = step ? fmtStep(step) : 'Guidage';
       const street = stepStreet(step);
-      titleEl.textContent = street || (step ? fmtStep(step) : 'Guidage');
+      titleEl.textContent = street ? `${instruction} · ${street}` : instruction;
     }
   }
-  if (subEl) subEl.textContent = still && step ? fmtStep(step) : '';
+  if (subEl) {
+    if (paused) subEl.textContent = 'Reprendre pour les prochaines manœuvres';
+    else if (still && step) subEl.textContent = fmtStep(step);
+    else if (step) subEl.textContent = stepStreet(step) ? fmtStep(step) : '';
+    else subEl.textContent = '';
+  }
   if (thenEl) {
-    if (!still && then && (then.maneuver?.type || '') !== 'arrive') {
+    if (!paused && !still && then && (then.maneuver?.type || '') !== 'arrive') {
       const thenName = stepStreet(then) || fmtStep(then);
       const ic = maneuverIcon(then.maneuver?.type, then.maneuver?.modifier);
+      const thenDist = then.distance != null ? fmtDist((then.distance || 0) / 1000) : '';
       thenEl.hidden = false;
-      thenEl.innerHTML = `<span class="then-k">Puis</span>${ic} ${esc(thenName)}`;
+      thenEl.innerHTML = `<span class="then-k">Puis</span>${ic} ${esc(thenName)}${thenDist ? ` · ${esc(thenDist)}` : ''}`;
     } else {
       thenEl.hidden = true;
       thenEl.textContent = '';
@@ -3276,6 +3336,14 @@ function paintTripInfoMenu() {
     fuel && fuel.rangeKm != null && fuel.rangeKm > 0 ? `~${Math.round(fuel.rangeKm)} km` : '';
   const fillW = fuel && fuel.pct != null ? fuel.pct : 0;
   let rows = '';
+  if (navigating && (free || mapsStartedFuel)) {
+    tickFuelDriveClock();
+    const kmLive = liveFuelKm();
+    const durLive = fuelDriveMs ? fmtFuelMins(fuelDriveMs) : '0 min';
+    rows +=
+      `<div class="ti-k">Parcouru</div>` +
+      `<div class="ti-v">${kmLive > 0.05 ? kmLive.toFixed(1) : '0,0'} km · ${esc(durLive)}</div>`;
+  }
   if (lastOrigin || lastDest) {
     const from = pinTitle(lastOrigin) || (lastOrigin && lastOrigin.fromHere ? 'Ma position' : 'Départ');
     const to = pinTitle(lastDest) || 'Destination';
@@ -7384,9 +7452,36 @@ document.addEventListener('click', (e) => {
 function applyFuelFromQuery() {
   const p = new URLSearchParams(location.search);
   const tripId = p.get('tripId');
+  const mode = String(p.get('mode') || '').toLowerCase();
   const q = p.get('q') || p.get('label');
   const lat = parseFloat(p.get('lat') || p.get('toLat'));
   const lon = parseFloat(p.get('lon') || p.get('toLon'));
+  const fromLat = parseFloat(p.get('fromLat'));
+  const fromLon = parseFloat(p.get('fromLon'));
+  const vehicleId = Number(p.get('vehicleId'));
+  if (Number.isFinite(vehicleId) && vehicleId > 0) {
+    try {
+      setSelectedFuelVehicle(vehicleId, true);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (tripId && Number(tripId) > 0) {
+    fuelTrip = tripId;
+  }
+  if (Number.isFinite(fromLat) && Number.isFinite(fromLon) && !me) {
+    setMe(fromLat, fromLon, false);
+  }
+  // Handoff Fuel « suivi libre » : HUD trajet tout de suite (Fuel a déjà le GPS).
+  if (tripId && Number(tripId) > 0 && (mode === 'free' || mode === 'track') && !navigating) {
+    enterFreeHud(tripId);
+    paintTripInfoMenu();
+    return;
+  }
+  if (tripId && Number(tripId) > 0 && mode === 'nav') {
+    // Fuel tourne déjà : lier le trajet dès le guidage.
+    mapsStartedFuel = true;
+  }
   const runDest = () => {
     if (Number.isFinite(lat) && Number.isFinite(lon)) {
       void routeTo(lat, lon, q || 'Destination');
@@ -7415,9 +7510,10 @@ function applyFuelFromQuery() {
   } else {
     runDest();
   }
-  if (tripId && (navigating || mapsStartedFuel)) {
-    fuelTrip = tripId;
+  if (tripId && Number(tripId) > 0 && (navigating || mapsStartedFuel)) {
     showFuelBar(`Trajet Fuel · ${tripId}`);
+    paintFuelStats();
+    paintTripInfoMenu();
   }
 }
 

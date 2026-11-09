@@ -87,6 +87,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="cloudity-maps" />
             </intent-filter>
+            <!-- Fuel / liens https → app native (pas le navigateur) -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="maps.hubera.cloud" />
+            </intent-filter>
         </activity>
     </application>
 </manifest>
