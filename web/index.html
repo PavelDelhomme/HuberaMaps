@@ -531,6 +531,31 @@
       box-shadow: 0 2px 8px rgba(0,0,0,.45); cursor: pointer; display: grid; place-items: center;
       pointer-events: auto;
     }
+    /* Pile de boutons « façon Waze » au-dessus du bouton Ma position */
+    .fab-extra {
+      position: absolute; z-index: 1600; right: 14px;
+      bottom: calc(var(--chrome) + 72px);
+      display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+    }
+    .fab-extra .fab {
+      position: static; width: 46px; height: 46px; border-radius: 12px;
+      color: #e8eef4; pointer-events: auto;
+    }
+    .fab-extra .fab:active { transform: scale(.95); }
+    .fab-report { color: #f0b429 !important; border-color: #f0b429 !important; }
+    .report-menu {
+      position: absolute; z-index: 1700; right: 70px;
+      bottom: calc(var(--chrome) + 176px);
+      background: #1a1a2e; border: 1px solid #2d2d44; border-radius: 12px; padding: 6px;
+      display: flex; flex-direction: column; gap: 2px; min-width: 150px;
+      box-shadow: 0 6px 18px rgba(0,0,0,.55);
+    }
+    .report-menu[hidden] { display: none !important; }
+    .report-menu button {
+      border: 0; background: transparent; color: #f1f5f9; text-align: left;
+      padding: 10px 12px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+    }
+    .report-menu button:hover { background: #243040; }
     .sheet, .panel, .fuel, .chrome, .alts {
       position: absolute; z-index: 1000; left: 0; right: 0; bottom: 0;
       background: #1a1a2e; box-shadow: 0 -2px 8px rgba(0,0,0,.4);
@@ -1175,6 +1200,18 @@
   <button type="button" class="fab" id="btnHere" title="Ma position" aria-label="Ma position">
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
   </button>
+  <div class="fab-extra" id="fabExtra">
+    <button type="button" class="fab fab-sm" id="btnZoomIn" title="Zoom avant" aria-label="Zoom avant">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <button type="button" class="fab fab-sm" id="btnZoomOut" title="Zoom arrière" aria-label="Zoom arrière">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14"/></svg>
+    </button>
+    <button type="button" class="fab fab-sm fab-report" id="btnReport" title="Signaler" aria-label="Signaler">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
+    </button>
+  </div>
+  <div class="report-menu" id="reportMenu" hidden></div>
   <div class="nav-signs" id="navSigns">
     <div class="trip-info" id="tripInfoMenu" hidden>
       <button type="button" class="trip-info-toggle" id="tripInfoToggle" title="Replier ou déplier la carte Fuel" aria-expanded="false" aria-controls="tripInfoPanel">▾</button>

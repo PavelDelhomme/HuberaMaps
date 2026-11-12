@@ -6938,6 +6938,59 @@ document.getElementById('btnHere').addEventListener('click', () => {
   goHere();
 });
 
+// --- Style Waze : zoom + / zoom − / signalements ---
+(() => {
+  const btnZoomIn = document.getElementById('btnZoomIn');
+  const btnZoomOut = document.getElementById('btnZoomOut');
+  if (btnZoomIn) btnZoomIn.addEventListener('click', () => map.zoomIn());
+  if (btnZoomOut) btnZoomOut.addEventListener('click', () => map.zoomOut());
+
+  const btn = document.getElementById('btnReport');
+  const menu = document.getElementById('reportMenu');
+  if (!btn || !menu) return;
+  const KINDS = [
+    { key: 'police', label: 'Police', color: '#3d9cf0' },
+    { key: 'accident', label: 'Accident', color: '#ef5b5b' },
+    { key: 'trafic', label: 'Trafic', color: '#f0b429' },
+    { key: 'danger', label: 'Danger', color: '#ef5b5b' },
+  ];
+  const closeMenu = () => { menu.hidden = true; };
+  const placeReport = (k) => {
+    closeMenu();
+    const c = me && typeof me.lat === 'number' ? [me.lat, me.lon] : map.getCenter();
+    L.circleMarker(c, {
+      radius: 9,
+      color: k.color,
+      weight: 2.5,
+      fillColor: k.color,
+      fillOpacity: 0.85,
+    }).addTo(map).bindPopup(`${k.label} · signalé`);
+    if (typeof toast === 'function') toast(`Signalement « ${k.label} » posé`);
+  };
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!menu.hidden) {
+      closeMenu();
+      return;
+    }
+    menu.innerHTML = '';
+    KINDS.forEach((k) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = k.label;
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        placeReport(k);
+      });
+      menu.appendChild(b);
+    });
+    menu.hidden = false;
+  });
+  document.addEventListener('click', () => {
+    if (!menu.hidden) closeMenu();
+  });
+})();
+
 document.getElementById('btnMenu').addEventListener('click', openDrawer);
 document.getElementById('btnMenuNav').addEventListener('click', openDrawer);
 document.getElementById('btnStopNav').addEventListener('click', () => {
