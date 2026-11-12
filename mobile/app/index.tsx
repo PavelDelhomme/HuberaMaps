@@ -50,6 +50,34 @@ export default function MapScreen() {
   const [route, setRoute] = useState<OsrmRoute | null>(null);
   const [dest, setDest] = useState<PhotonHit | null>(null);
   const [busyFuel, setBusyFuel] = useState(false);
+  // --- Style Waze : zoom, signalements, État de la carte ---
+  const [region, setRegion] = useState<Region>(FRANCE);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reports, setReports] = useState<
+    { latitude: number; longitude: number; kind: string }[]
+  >([]);
+
+  const REPORT_KINDS: { key: string; label: string; icon: string; color: string }[] = [
+    { key: 'police', label: 'Police', icon: 'shield', color: '#3d9cf0' },
+    { key: 'accident', label: 'Accident', icon: 'car', color: '#ef5b5b' },
+    { key: 'trafic', label: 'Trafic', icon: 'trail-sign', color: '#f0b429' },
+    { key: 'danger', label: 'Danger', icon: 'warning', color: '#ef5b5b' },
+  ];
+
+  const zoomBy = (factor: number) => {
+    const next: Region = {
+      ...region,
+      latitudeDelta: Math.max(0.002, Math.min(60, region.latitudeDelta * factor)),
+      longitudeDelta: Math.max(0.002, Math.min(60, region.longitudeDelta * factor)),
+    };
+    mapRef.current?.animateToRegion(next, 220);
+  };
+
+  const addReport = (kind: string) => {
+    setReportOpen(false);
+    if (!me) return;
+    setReports((prev) => [...prev, { latitude: me.latitude, longitude: me.longitude, kind }]);
+  };
 
   useEffect(() => {
     const parsed = parseMapsLink(incoming);
@@ -204,11 +232,27 @@ export default function MapScreen() {
         showsUserLocation
         showsMyLocationButton={false}
         toolbarEnabled={false}
+        onRegionChangeComplete={setRegion}
         mapType={Platform.OS === 'android' ? 'none' : 'standard'}
       >
         {Platform.OS === 'android' ? (
           <UrlTile urlTemplate={OSM} maximumZ={19} zIndex={-1} />
         ) : null}
+        {reports.map((r, i) => (
+          <Marker
+            key={`rep-${i}-${r.latitude}-${r.longitude}`}
+            coordinate={{ latitude: r.latitude, longitude: r.longitude }}
+            title={REPORT_KINDS.find((k) => k.key === r.kind)?.label ?? 'Signalement'}
+          >
+            <View style={[styles.reportPin, { borderColor: REPORT_KINDS.find((k) => k.key === r.kind)?.color ?? '#ef5b5b' }]}>
+              <Ionicons
+                name={(REPORT_KINDS.find((k) => k.key === r.kind)?.icon ?? 'warning') as never}
+                size={16}
+                color={REPORT_KINDS.find((k) => k.key === r.kind)?.color ?? '#ef5b5b'}
+              />
+            </View>
+          </Marker>
+        ))}
         {dest ? (
           <Marker
             coordinate={{ latitude: dest.latitude, longitude: dest.longitude }}
@@ -250,16 +294,64 @@ export default function MapScreen() {
         ) : null}
       </View>
 
-      <Pressable style={[styles.fab, { bottom: (fuel?.tripId ? 168 : 96) + insets.bottom }]} onPress={goMe}>
-        <Ionicons name="navigate" size={22} color="#e94560" />
-      </Pressable>
+      <View style={[styles.fabStack, { bottom: (fuel?.tripId ? 176 : 104) + insets.bottom }]}>
+        <Pressable style={styles.fab} onPress={goMe} accessibilityLabel="Recentrer">
+          <Ionicons name="navigate" size={22} color="#3d9cf0" />
+        </Pressable>
+        <Pressable style={styles.fab} onPress={() => zoomBy(1 / 1.6)} accessibilityLabel="Zoom avant">
+          <Ionicons name="add" size={24} color="#e8eef4" />
+        </Pressable>
+        <Pressable style={styles.fab} onPress={() => zoomBy(1.6)} accessibilityLabel="Zoom arrière">
+          <Ionicons name="remove" size={24} color="#e8eef4" />
+        </Pressable>
+        <Pressable
+          style={[styles.fab, styles.fabReport]}
+          onPress={() => setReportOpen((v) => !v)}
+          accessibilityLabel="Signaler"
+        >
+          <Ionicons name="megaphone" size={20} color="#f0b429" />
+        </Pressable>
+      </View>
+
+      {reportOpen ? (
+        <View style={[styles.reportSheet, { bottom: (fuel?.tripId ? 176 : 104) + insets.bottom }]}>
+          <Text style={styles.reportTitle}>Signaler</Text>
+          {REPORT_KINDS.map((k) => (
+            <Pressable key={k.key} style={styles.reportItem} onPress={() => addReport(k.key)}>
+              <Ionicons name={k.icon as never} size={20} color={k.color} />
+              <Text style={styles.reportItemText}>{k.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
 
       {route && dest ? (
-        <View style={[styles.sheet, { bottom: (fuel?.tripId ? 88 : 16) + insets.bottom }]}>
-          <Text style={styles.sheetTitle}>{dest.label}</Text>
-          <Text style={styles.sheetMeta}>
-            {route.km.toFixed(1)} km · {route.minutes} min · OSRM
-          </Text>
+        <View style={[styles.sheet, { bottom: (fuel?.tripId ? 96 : 20) + insets.bottom }]}>
+          <View style={styles.sheetHead}>
+            <View style={styles.sheetInfo}>
+              <Text style={styles.sheetTitle} numberOfLines={1}>
+                {dest.label}
+              </Text>
+              <Text style={styles.sheetMeta}>
+                {route.km.toFixed(1)} km · {route.minutes} min
+              </Text>
+            </View>
+            <Pressable
+              style={styles.sheetClose}
+              onPress={() => {
+                setDest(null);
+                setRoute(null);
+                setQuery('');
+              }}
+              accessibilityLabel="Fermer l'itinéraire"
+            >
+              <Ionicons name="close" size={20} color="#94a3b8" />
+            </Pressable>
+          </View>
+          <Pressable style={styles.goBtn} onPress={goMe} accessibilityLabel="Démarrer">
+            <Ionicons name="navigate" size={18} color="#04120b" />
+            <Text style={styles.goBtnText}>Démarrer</Text>
+          </Pressable>
         </View>
       ) : null}
 
@@ -341,22 +433,60 @@ const styles = StyleSheet.create({
     borderBottomColor: '#2d2d44',
   },
   hitText: { flex: 1, color: '#f1f5f9', fontSize: 15 },
+  fabStack: { position: 'absolute', right: 14, gap: 10, alignItems: 'center', zIndex: 12 },
   fab: {
-    position: 'absolute',
-    right: 16,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     backgroundColor: '#1a1a2e',
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 4,
+    elevation: 5,
     shadowColor: '#000',
-    shadowOpacity: 0.35,
-    shadowRadius: 6,
+    shadowOpacity: 0.4,
+    shadowRadius: 7,
+    shadowOffset: { width: 0, height: 2 },
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#2d2d44',
   },
+  fabReport: { borderColor: '#f0b429' },
+  reportPin: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#1a1a2e',
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reportSheet: {
+    position: 'absolute',
+    right: 74,
+    backgroundColor: '#1a1a2e',
+    borderRadius: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    elevation: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#2d2d44',
+    zIndex: 13,
+  },
+  reportTitle: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: '700',
+    paddingHorizontal: 12,
+    paddingBottom: 6,
+  },
+  reportItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minWidth: 150,
+  },
+  reportItemText: { color: '#f1f5f9', fontSize: 15, fontWeight: '600' },
   sheet: {
     position: 'absolute',
     left: 12,
@@ -366,8 +496,29 @@ const styles = StyleSheet.create({
     padding: 14,
     elevation: 4,
   },
+  sheetHead: { flexDirection: 'row', alignItems: 'center' },
+  sheetInfo: { flex: 1 },
   sheetTitle: { fontSize: 16, fontWeight: '700', color: '#f1f5f9' },
   sheetMeta: { marginTop: 4, color: '#94a3b8', fontSize: 13 },
+  sheetClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#16213e',
+  },
+  goBtn: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#2ec9a3',
+    borderRadius: 999,
+    paddingVertical: 12,
+  },
+  goBtnText: { color: '#04120b', fontWeight: '800', fontSize: 16 },
   fuelBar: {
     position: 'absolute',
     left: 0,
