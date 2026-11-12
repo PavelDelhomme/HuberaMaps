@@ -25,3 +25,7 @@ __pycache__/
 **/__pycache__/
 
 *.torrent
+
+# Données utilisateurs (comptes Hubera ID) — jamais dans git
+hubera-users.json
+**/hubera-users.json
